@@ -1,5 +1,7 @@
 #include "Robot.h"
 
+#include <cmath>
+
 Robot_c::Robot_c() {
   memset(&teamname, 0, sizeof(teamname));
   memset(&encoders, 0, sizeof(encoders));
@@ -59,7 +61,7 @@ bool Robot_c::getPose() {
 }
 
 bool Robot_c::startMoveDistance(float distance_mm) {
-  if (!isfinite(distance_mm)
+  if (!std::isfinite(distance_mm)
       || fabsf(distance_mm) > MOTION_REQUEST_MAX_ABS_DISTANCE_MM) {
     return false;
   }
@@ -70,7 +72,7 @@ bool Robot_c::startMoveDistance(float distance_mm) {
 }
 
 bool Robot_c::startRotateAngle(float angle_rad) {
-  if (!isfinite(angle_rad)
+  if (!std::isfinite(angle_rad)
       || fabsf(angle_rad) > MOTION_REQUEST_MAX_ABS_ANGLE_RAD) {
     return false;
   }
@@ -186,7 +188,7 @@ bool Robot_c::setMotorPWM(float l, float r) {
 }
 
 bool Robot_c::setPose(float x, float y, float theta) {
-  if (!isfinite(x) || !isfinite(y) || !isfinite(theta)) return false;
+  if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(theta)) return false;
 
   RobotPose_t new_pose;
   new_pose.x = x;

@@ -1,5 +1,7 @@
 #include "OdometryModel.h"
 
+#include <cmath>
+
 #include <Arduino.h>
 
 OdometryModel_c::OdometryModel_c(float wheelRadiusMm, float separationMm, float countsPerRevolution)
@@ -26,10 +28,10 @@ void OdometryModel_c::reset(float x, float y, float theta) {
 }
 
 bool OdometryModel_c::update(int32_t leftCount, int32_t rightCount) {
-  if (!isfinite(leftWheelRadiusMm) || leftWheelRadiusMm <= 0.0f ||
-      !isfinite(rightWheelRadiusMm) || rightWheelRadiusMm <= 0.0f ||
-      !isfinite(wheelSeparationMm) || wheelSeparationMm <= 0.0f ||
-      !isfinite(encoderCountsPerRevolution) ||
+  if (!std::isfinite(leftWheelRadiusMm) || leftWheelRadiusMm <= 0.0f ||
+      !std::isfinite(rightWheelRadiusMm) || rightWheelRadiusMm <= 0.0f ||
+      !std::isfinite(wheelSeparationMm) || wheelSeparationMm <= 0.0f ||
+      !std::isfinite(encoderCountsPerRevolution) ||
       encoderCountsPerRevolution <= 0.0f) {
     return false;
   }
