@@ -23,6 +23,11 @@ class Controller_c {
      */
     OdometryModel_c odometry;
 
+    /** Keep track of the number of times the function is called */
+    unsigned long call_count;
+    /** @brief The motor PWM current setting */
+    unsigned long motor_pwm;
+
     /** @brief Fastest interval between controller and I2C acquisition cycles. */
     static const unsigned long UPDATE_INTERVAL_MS = 10;
     /** @brief Interval between telemetry records in milliseconds. */
@@ -93,6 +98,12 @@ class Controller_c {
 
     /** @brief Returns whether cached DN3 is at or above LINE_THRESHOLD. */
     bool lineDetected(const Robot_c &robot) const;
+
+    /** @brief Runs a start/stop test for the motors. */
+    void motorStartStopTest(Robot_c &robot, unsigned long now);
+
+    /** @brief Runs a speed ramp test for the motors. */
+    void motorSpeedRampTest(Robot_c &robot, unsigned long now);
 
     /** @brief Applies the nominal controller behaviour for the current mode. */
     void runLineFollower(Robot_c &robot, unsigned long now);
