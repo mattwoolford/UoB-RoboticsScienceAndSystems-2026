@@ -39,24 +39,55 @@ void setup() {
 }
 
 
+/**
+ * @brief Handles the start button and advances its non-blocking two-note feedback.
+ * Call once per loop. This owns button polling so the start request and tone use
+ * the same event, and retains the pending second note between calls.
+ */
+static void updateStartButtonFeedback() {
+  // Read the debounced button once: a second read would consume the same
+  // debounce interval and could miss the press. Check readiness at the time of
+  // the press; a rejected start must not run later when calibration finishes.
+  static bool second_note_pending = false;
+  static uint16_t second_note_frequency = 0;
+  static unsigned long first_note_started_ms = 0;
+  constexpr unsigned long NOTE_DURATION_MS = 50;
+  if (robot.isButtonPressed()) {
+    if (!second_note_pending) {
+      const bool ready = controller.isReadyToStart();
+      if (ready) controller.setSignal(1);
+
+      // Rising octave confirms an accepted start; falling octave reports that
+      // calibration is incomplete/failed or the procedure has already started.
+      // Store this result now, rather than rechecking after the first beep.
+      second_note_frequency = static_cast<uint16_t>(Sound::transposeFrequency(
+        Sound::BASE, Sound::Octave(ready ? 1 : -1)));
+      second_note_pending = robot.playTone(Sound::BASE, NOTE_DURATION_MS);
+      first_note_started_ms = millis();
+    }
+  }
+
+  // The buzzer request does not wait for playback. Schedule the next note on a
+  // later loop instead of overwriting the first note immediately or using delay().
+  // Unsigned elapsed-time subtraction remains valid when millis() wraps around.
+  if (second_note_pending && millis() - first_note_started_ms >= NOTE_DURATION_MS) {
+    robot.playTone(
+      second_note_frequency,
+      NOTE_DURATION_MS
+    );
+    second_note_pending = false;
+  }
+}
+
+
 /** @brief Maintains telemetry transport and runs the controller repeatedly. */
 void loop() {
   // Accept or maintain the optional Processing telemetry connection. The
   // controller continues to run even when no client is connected.
   server.update();
 
-  // Play a tone when the button is pressed
-  bool button_state = robot.isButtonPressed();
-  if( button_state == true ) {
-    robot.playTone( Sound::BASE, 50 );
-    delay(100);
-    robot.playTone(
-      static_cast<uint16_t>(Sound::transposeFrequency(Sound::BASE, Sound::Octave(2))),
-      50
-    );
-  }
+  updateStartButtonFeedback();
 
-  
   // Run an iteration of the robot controller code.
   // Develop controller routines in Controller.cpp; edit parameters in Controller.h.
   controller.update(robot, server);
