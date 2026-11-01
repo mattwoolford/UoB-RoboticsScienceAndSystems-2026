@@ -35,13 +35,18 @@ uint8_t Controller_c::getSignal() const {
   return signal;
 }
 
+bool Controller_c::isReadyToStart() const {
+  return motor_deadband_calibrated && !motor_calibration.hasFailed()
+      && signal == 0 && mode == WAITING;
+}
+
 void Controller_c::setSignal(uint8_t requested_signal) {
   if (requested_signal == 0) {
     reset();
     return;
   }
 
-  if (signal == 0) {
+  if (isReadyToStart()) {
     signal = 1;
     mode = FOLLOWING_LINE;
     recovery_start_ms = 0;
@@ -81,15 +86,8 @@ void Controller_c::update(Robot_c &robot, RobotWifiAP_c &server) {
   // Pose estimation from the Pololu 3Pi robot itself.
   robot.getPose();
 
-  // While waiting, a button press sets signal to 1 and starts the physical
-  // robot's line follower, even without Processing connected. The transmitted
-  // signal also starts an armed Digital Twin live comparison. This is a start
-  // control, not a start/stop toggle; further presses are ignored while signal is 1.
-  if (signal == 0) {
-    if (robot.isButtonPressed()) {
-      setSignal(1);
-    }
-  }
+  // main.ino owns button polling and latches the start through setSignal().
+  // Do not poll here: the tone and controller must share the same button event.
 
   // Preserve automatic calibration on startup, while allowing sensor acquisition
   // and WiFi servicing to continue between PWM steps. Calibration exclusively
@@ -117,9 +115,9 @@ void Controller_c::update(Robot_c &robot, RobotWifiAP_c &server) {
   // Driving routines may run only after calibration has successfully stopped.
   if (signal == 1 && motor_deadband_calibrated) {
     // runLineFollower(robot, now);
-    // motorStartStopTest(robot, now);
+    motorStartStopTest(robot, now);
     // motorSpeedRampTest(robot, now);
-    monitorWheelSpeed(robot, now);
+    // monitorWheelSpeed(robot, now);
   }
 
   // Use another TaskTimer_c to limit how often we transmit telemetry data
