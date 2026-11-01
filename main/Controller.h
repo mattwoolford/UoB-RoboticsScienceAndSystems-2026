@@ -5,6 +5,7 @@
 #include "RobotWifiAP.h"
 #include "TaskTimer.h"
 #include "OdometryModel.h"
+#include "MotorCalibration.h"
 
 /**
  * @brief Supplies the nominal line-following controller for the StampC3 example.
@@ -44,7 +45,8 @@ class Controller_c {
     Controller_c();
 
     /** @brief Clears signal and mode state, returning the controller to waiting.
-     * @note This does not reset the task timers or the local odometry estimate.
+     * @note This also prepares a new motor calibration attempt for update().
+     * It does not reset the task timers or the local odometry estimate.
      * It sends no motor command: returning to waiting does not stop the motors.
      * Send robot.setMotorPWM(0, 0) separately and check the command result.
      */
@@ -105,6 +107,10 @@ class Controller_c {
     float left_wheel_speed;
     /** Log the wheel speed (right wheel) */
     float right_wheel_speed;
+    /** @brief Owns the independent forward deadband measurements and ramp state. */
+    MotorCalibration_c motor_calibration;
+    /** @brief Whether or not the motor deadband has been calibrated */
+    bool motor_deadband_calibrated;
     unsigned long recovery_start_ms;
 
 
