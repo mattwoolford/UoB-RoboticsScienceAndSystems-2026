@@ -14,11 +14,13 @@ class Robot_c {
   /** @brief Simulated clock, advanced explicitly in milliseconds. */
   long simulationMillis = 0;
   PImage surfaceImage;
+  StraightLineExperiment straightLine = null;
   final float surfaceOffsetX;
   final float surfaceOffsetY;
   RobotSurface_c surface = new RobotSurface_c();
   MotorsModel_c motors = new MotorsModel_c();
-  OdometryModel_c odometry;
+  // Continuous world pose: independent of the controller encoder estimate.
+  DrivePhysics_c odometry;
   SurfaceSensorModel_c[] sensors = new SurfaceSensorModel_c[5];
 
   /**
@@ -35,7 +37,7 @@ class Robot_c {
     surfaceImage = surfaceIn;
     surfaceOffsetX = surfaceOffsetXIn;
     surfaceOffsetY = surfaceOffsetYIn;
-    odometry = new OdometryModel_c(wheelRadiusMm, encoderCountsPerRevolution);
+    odometry = new DrivePhysics_c(wheelRadiusMm, encoderCountsPerRevolution);
     sensors[0] = new SurfaceSensorModel_c("DN1", 45, 45);
     sensors[1] = new SurfaceSensorModel_c("DN2", 45, 14);
     sensors[2] = new SurfaceSensorModel_c("DN3", 45, 0);
@@ -55,13 +57,25 @@ class Robot_c {
   void getSurfaceSensors() {
     RobotPose_c pose = odometry.pose;
     for (int i = 0; i < sensors.length; i++) {
-      surface.reading[i] = sensors[i].sample(surfaceImage, surfaceOffsetX,
-        surfaceOffsetY, pose.x, pose.y, pose.theta);
+      if (straightLine != null) {
+        // Analytic strip avoids asymmetric raster rounding at opposite sensors.
+        float x = pose.x + sensors[i].localX * cos(pose.theta) - sensors[i].localY * sin(pose.theta);
+        float y = pose.y + sensors[i].localX * sin(pose.theta) + sensors[i].localY * cos(pose.theta);
+        surface.reading[i] = x >= straightLine.LINE_START_X && x <= straightLine.LINE_END_X
+          && abs(y) <= straightLine.LINE_WIDTH_MM / 2 ? 2000 : 400;
+      } else {
+        surface.reading[i] = sensors[i].sample(surfaceImage, surfaceOffsetX,
+          surfaceOffsetY, pose.x, pose.y, pose.theta);
+      }
     }
   }
 
   /** @brief Compatibility method; encoder values update during physics steps. */
-  void getEncoders() { }
+  boolean getEncoders() { return true; }
+  int getLeftEncoderCount() { return (int)odometry.encoders.left; }
+  int getRightEncoderCount() { return (int)odometry.encoders.right; }
+  int getLeftMotorPWM() { return (int)motors.left.pwm; }
+  int getRightMotorPWM() { return (int)motors.right.pwm; }
   /** @brief Compatibility method; pose values update during physics steps. */
   void getPose() { }
 
@@ -69,8 +83,10 @@ class Robot_c {
    * @param leftPwm Requested left PWM, nominally -200 to +200.
    * @param rightPwm Requested right PWM, nominally -200 to +200.
    */
-  void setMotorPWM(float leftPwm, float rightPwm) {
-    motors.setPWM(leftPwm, rightPwm);
+  boolean setMotorPWM(float leftPwm, float rightPwm) {
+    // Robot.cpp transmits integer PWM (truncation towards zero).
+    motors.setPWM((int)leftPwm, (int)rightPwm);
+    return true;
   }
 
   /** @brief Resets pose and encoder state for a controlled run.

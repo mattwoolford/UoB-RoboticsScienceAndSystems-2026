@@ -18,7 +18,7 @@ class Simulator {
   final int tcpConnectTimeoutMs = 250;
   final float minimumZoom = 0.25;
   final float maximumZoom = 4.0;
-  final int SANDBOX = 0, LIVE_COMPARISON = 1;
+  final int SANDBOX = 0, LIVE_COMPARISON = 1, STRAIGHT_LINE = 2;
 
   /** @brief Surface-image centre in world coordinates, in mm. */
   final float surfaceOffsetX;
@@ -42,7 +42,9 @@ class Simulator {
 
   boolean showTelemetry = false;
   boolean trackRobot = false;
-  int simulatorMode = SANDBOX;
+  int simulatorMode = STRAIGHT_LINE;
+  StraightLineExperiment experiment;
+  boolean sandboxStarted = false;
   boolean liveArmed = false;
   boolean liveRunning = false;
   int previousTcpSignal = 0;
@@ -85,7 +87,7 @@ class Simulator {
     robot = new Robot_c(16.0, 90.00, surfaceImage,
       surfaceOffsetX, surfaceOffsetY);
     controller = new Controller_c();
-    controller.setSignal(1); // Sandbox starts immediately.
+    restartExperiment();
     lastSimulationUpdateMs = millis();
 
     motorGraph = new TimeSeriesGraph("Motor PWM", graphWindowMs, true);
@@ -106,7 +108,7 @@ class Simulator {
 
   /** @brief Updates TCP, advances fixed-step model time, and records graphs. */
   void update() {
-    updateTcpConnection();
+    if (simulatorMode == LIVE_COMPARISON) updateTcpConnection();
     updateRobotModel();
 
     if (trackRobot) {
@@ -133,10 +135,20 @@ class Simulator {
     int steps = 0;
     while (simulationAccumulatorMs >= simulationUpdateIntervalMs
       && steps < maximumCatchUpSteps) {
-      robot.advanceTime(simulationUpdateIntervalMs);
-      updateLiveClock();
-      controller.update(robot);
-      robot.updatePhysics(simulationUpdateIntervalMs);
+      if (simulatorMode == STRAIGHT_LINE) {
+        boolean wasComplete = experiment.complete;
+        experiment.step(robot, controller, simulationUpdateIntervalMs);
+        if (!wasComplete && experiment.complete) experiment.exportCsv();
+      } else {
+        robot.advanceTime(simulationUpdateIntervalMs);
+        updateLiveClock();
+        controller.update(robot);
+        if (simulatorMode == SANDBOX && !sandboxStarted && controller.isReadyToStart()) {
+          controller.setSignal(1);
+          sandboxStarted = true;
+        }
+        robot.updatePhysics(simulationUpdateIntervalMs);
+      }
       simulationAccumulatorMs -= simulationUpdateIntervalMs;
       steps++;
     }
@@ -155,14 +167,15 @@ class Simulator {
   void draw() {
 
     background(180);
-    updateSurfaceViewportCache();
+    if (simulatorMode != STRAIGHT_LINE) updateSurfaceViewportCache();
 
     pushMatrix();
     translate(width / 2.0, height / 2.0);
     scale(zoom, -zoom);
     translate(-viewCentreX, -viewCentreY);
     imageMode(CENTER);
-    drawSurfaceViewportCache();
+    if (simulatorMode == STRAIGHT_LINE) experiment.drawSurface();
+    else drawSurfaceViewportCache();
     robot.draw();
     if (simulatorMode == LIVE_COMPARISON && ghost.timestampMs >= 0) drawGhost();
 
@@ -170,6 +183,7 @@ class Simulator {
 
     drawStatus();
     if (showTelemetry) drawTelemetryPanel();
+    if (simulatorMode == STRAIGHT_LINE) experiment.drawPanel(robot, controller, statusWidth());
   }
 
   void updateSurfaceViewportCache() {
@@ -242,6 +256,8 @@ class Simulator {
    * @param pressedKeyCode Processing key code for arrow-key panning.
    */
   void handleKey(char pressedKey, int pressedKeyCode) {
+    if ((pressedKey == 'r' || pressedKey == 'R') && simulatorMode == STRAIGHT_LINE) restartExperiment();
+    if ((pressedKey == 'e' || pressedKey == 'E') && simulatorMode == STRAIGHT_LINE) experiment.exportCsv();
     if (pressedKey == 'g' || pressedKey == 'G') showTelemetry = !showTelemetry;
     if (pressedKey == 't' || pressedKey == 'T') trackRobot = !trackRobot;
     if ((pressedKey == 'm' || pressedKey == 'M') && !liveRunning) toggleMode();
@@ -261,9 +277,31 @@ class Simulator {
 
   /** @brief Switches between standalone sandbox and live-comparison modes. */
   void toggleMode() {
-    simulatorMode = simulatorMode == SANDBOX ? LIVE_COMPARISON : SANDBOX;
+    if (simulatorMode == STRAIGHT_LINE && !experiment.complete && experiment.samples.getRowCount() > 0)
+      experiment.exportCsv();
+    simulatorMode = (simulatorMode + 1) % 3;
     resetLiveSession();
-    if (simulatorMode == SANDBOX) controller.setSignal(1);
+    robot.resetForRun(0, 0, -PI / 2, 0, 0);
+    controller = new Controller_c();
+    controller.odometry.reset(0, 0, -PI / 2);
+    robot.straightLine = null;
+    sandboxStarted = false;
+    if (simulatorMode == STRAIGHT_LINE) restartExperiment();
+  }
+
+  void restartExperiment() {
+    if (experiment != null && !experiment.complete && experiment.samples.getRowCount() > 0)
+      experiment.exportCsv();
+    experiment = new StraightLineExperiment();
+    controller = new Controller_c();
+    controller.procedure = controller.LINE_FOLLOW;
+    robot.resetForRun(0, 0, 0, 0, 0);
+    robot.simulationMillis = 0;
+    robot.straightLine = experiment;
+    simulationAccumulatorMs = 0;
+    lastSimulationUpdateMs = millis();
+    viewCentreX = viewCentreY = 0;
+    trackRobot = true;
   }
 
   void panBy(float deltaX, float deltaY) {
@@ -290,13 +328,14 @@ class Simulator {
     text("+/-: zoom   Arrows: pan   T: tracking "
       + (trackRobot ? "on" : "off") + "   G: telemetry   M: mode",
       margin, margin + lineHeight * 2, contentWidth, lineHeight);
-    text(tcpStatus, margin, margin + lineHeight * 3, contentWidth, lineHeight);
+    text(simulatorMode == LIVE_COMPARISON ? tcpStatus : "Offline simulation (no TCP input)", margin, margin + lineHeight * 3, contentWidth, lineHeight);
     text(liveStatus(), margin, margin + lineHeight * 4, contentWidth, lineHeight);
     popStyle();
   }
 
   String liveStatus() {
-    if (simulatorMode == SANDBOX) return "Mode: Sandbox";
+    if (simulatorMode == STRAIGHT_LINE) return "Mode: Sterile straight-line experiment (line follower)";
+    if (simulatorMode == SANDBOX) return "Mode: Sandbox (main motor start/stop test)";
     if (telemetryClient == null) return "Mode: Live comparison — Offline";
     if (!liveArmed) return "Mode: Live comparison — Awaiting fresh signal 0";
     if (!liveRunning) return "Mode: Live comparison — Armed";
@@ -309,7 +348,7 @@ class Simulator {
     if (now - lastGraphSampleMs < graphSamplePeriodMs) return;
     lastGraphSampleMs = now;
     float[] simulatedSensors = robot.sensorReadings();
-    if (tcpTelemetry.isRecent(now)) {
+    if (simulatorMode == LIVE_COMPARISON && tcpTelemetry.isRecent(now)) {
     motorGraph.addSample(now, new float[] {robot.motors.left.pwm, robot.motors.right.pwm,
         tcpTelemetry.pwmLeft, tcpTelemetry.pwmRight});
       sensorGraph.addSample(now, combine(simulatedSensors, tcpTelemetry.sensorReadings));
@@ -486,10 +525,12 @@ class Simulator {
       liveArmed = true;
     }
     if (liveArmed && !liveRunning && previousTcpSignal == 0 && sample.signal == 1) {
-      controller.reset();
+      if (!controller.isReadyToStart()) return;
       controller.setSignal(1);
       robot.resetForRun(armedPose.x, armedPose.y, armedPose.theta,
         armedPose.encoderLeft, armedPose.encoderRight);
+      controller.odometry.reset(armedPose.x, armedPose.y, armedPose.theta);
+      controller.odometry.update(robot.getLeftEncoderCount(), robot.getRightEncoderCount());
       liveStartTcpMs = sample.timestampMs;
       liveStartSimulationMs = robot.getMillis();
       ghost = armedPose.copy();
@@ -507,7 +548,10 @@ class Simulator {
     previousTcpSignal = 0;
     lastTcpTimestampMs = -1;
     ghost = new TCPTelemetry_c();
-    if (simulatorMode == LIVE_COMPARISON) controller.reset();
+    if (simulatorMode == LIVE_COMPARISON) {
+      robot.setMotorPWM(0, 0);
+      controller.reset();
+    }
   }
 
   /** @brief Starts a short asynchronous connection attempt to the StampC3. */
