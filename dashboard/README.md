@@ -67,10 +67,8 @@ WiFi by the Python process, not directly by the browser.
 Choose **Virtual robot**, a candidate, trial count and seed. Run a single model,
 all models sequentially, or all models in parallel. Sterile always runs once;
 the other candidates use the requested count (1–100). All tests use the original
-fixed 10 ms physics step, equal PWM 100/100, and 30 simulated seconds. The PWM comes
-from `Controller_c.CONSTANT_PWM` in `DigitalTwin/Controller.pde`, matching the
-physical constant-run setting. Dashboard PWM readings come from the selected
-trial's actual Java samples, streamed once per simulated second. Headless runs are fast;
+fixed 10 ms physics step, equal PWM 45/45, and 30 simulated seconds. Samples are
+actual Java results, streamed once per simulated second. Headless runs are fast;
 turn on the Processing window option to watch real-time motion (Space pauses).
 Compilation happens before samples appear. While running, **Run simulation** is
 replaced by **Stop simulation** in the same location. Stopping terminates all

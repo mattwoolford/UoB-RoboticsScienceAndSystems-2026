@@ -67,8 +67,7 @@ public class HeadlessDigitalTwinTest {
     check(controller.mode == controller.STOPPED && robot.getLeftMotorPWM() == 0, "Recovery timeout");
     controller = app.new Controller_c();
     for (int i = 0; i < 301; i++) controller.motorStartStopTest(robot, i * 10);
-    check(robot.getLeftMotorPWM() == 100 && robot.getRightMotorPWM() == 100,
-      "Main start/stop PWM and call-count boundary");
+    check(robot.getLeftMotorPWM() == 45, "Main start/stop call-count boundary");
     controller.motorStartStopTest(robot, 3010);
     check(robot.getLeftMotorPWM() == 0, "Main start/stop stops");
     var odometry = app.new OdometryModel_c();

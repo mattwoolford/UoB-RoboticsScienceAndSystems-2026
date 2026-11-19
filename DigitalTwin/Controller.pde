@@ -13,8 +13,6 @@ class Controller_c {
   final float LINE_THRESHOLD = 1400;
   // Keep these values aligned with main/Controller.h.
   final float BASE_PWM = 45;
-  // Shared by the motor start/stop test and open-loop simulation batches.
-  static final int CONSTANT_PWM = 100;
   final float LINE_FOLLOW_GAIN = 0.01;
   final float RECOVERY_LEFT_PWM = -35.0;
   final float RECOVERY_RIGHT_PWM = 35.0;
@@ -115,7 +113,7 @@ class Controller_c {
       return;
     }
     call_count++;
-    robot.setMotorPWM(CONSTANT_PWM, CONSTANT_PWM);
+    robot.setMotorPWM(BASE_PWM, BASE_PWM);
   }
 
   /** @brief Tests whether the central surface channel is at or above the line threshold. */
