@@ -58,16 +58,10 @@ class Controller_c {
      */
     uint8_t getSignal() const;
 
-    /** @brief True when calibration succeeded and the procedure is waiting.
-     * Used by both start gating and button feedback so their conditions agree.
-     */
-    bool isReadyToStart() const;
-
     /**
      * @brief Starts the controller or resets it to waiting.
      * @param requested_signal Zero resets to waiting without sending a motor stop;
-     * a non-zero value starts only when isReadyToStart() is true.
-     * Requests made before calibration completes are ignored, not queued.
+     * a non-zero value starts line following only if the current signal is zero.
      * @note The signal remains one after a line-search timeout. Reset to zero
      * before requesting another start; a repeated non-zero value has no effect.
      */
