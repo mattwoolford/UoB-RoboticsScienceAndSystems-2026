@@ -1,4 +1,5 @@
 """Exercise the production controller with simulated motors; requires a C++ compiler."""
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -8,7 +9,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 with tempfile.TemporaryDirectory(prefix="robot-controller-") as directory:
     work = Path(directory)
-    for stem in ("Controller", "MotorCalibration", "OdometryModel", "TaskTimer"):
+    shutil.copy(ROOT / "main/DriftSettings.h", work)
+    shutil.copy(ROOT / "tests/fake_drift_settings.cpp", work)
+    for stem in ("Controller", "DriftCorrection", "MotorCalibration", "OdometryModel", "TaskTimer"):
         for suffix in (".cpp", ".h"):
             shutil.copy(ROOT / "main" / (stem + suffix), work)
     (work / "Arduino.h").write_text(r'''
@@ -37,12 +40,12 @@ struct Robot_c {
   struct { uint16_t reading[5] = {}; } surface;
   int16_t left = 0, right = 0;
   int32_t left_count = 0, right_count = 0;
-  bool fail_stop = false;
+  bool fail_stop = false, fail_encoders = false;
   unsigned commands = 0;
   unsigned long getMillis() { return millis(); }
   void getSurfaceSensors() {}
   void getPose() {}
-  bool getEncoders() { return true; }
+  bool getEncoders() { return !fail_encoders; }
   int32_t getLeftEncoderCount() { return left_count; }
   int32_t getRightEncoderCount() { return right_count; }
   int16_t getLeftMotorPWM() { return left; }
@@ -102,7 +105,40 @@ int main() {
   std::cout << "Controller regression tests passed\n";
 }
 ''')
-    sources = [str(p) for p in work.glob("*.cpp")]
-    subprocess.run(["c++", "-std=c++17", "-I", str(work), *sources,
-                    "-o", str(work / "test")], check=True)
-    subprocess.run([str(work / "test")], check=True)
+    sources = [str(p) for p in work.glob("*.cpp") if p.name != "test.cpp"]
+
+    def build_and_run(main, flags):
+        binary = work / "test"
+        subprocess.run(["c++", "-std=c++17", "-I", str(work), *flags, *sources,
+                        str(main), "-o", str(binary)], check=True)
+        return subprocess.check_output([str(binary)], text=True)
+
+    print(build_and_run(work / "test.cpp", []).strip())
+    results = []
+    for master, recovery in ((0, 0), (0, 1), (1, 0), (1, 1)):
+        flags = [f"-DROBOT_DRIFT_CORRECTION={master}",
+                 f"-DROBOT_DRIFT_PATH_RECOVERY={recovery}"]
+        output = build_and_run(ROOT / "tests/drift_controller.cpp", flags)
+        results.append([json.loads(line) for line in output.splitlines()])
+    disabled, recovery_only, basic, refined = results
+    assert disabled == recovery_only, "Recovery must respect the master switch"
+    for off, base, fast in zip(disabled, basic, refined):
+        assert off["first_tick"] == 0
+        assert 0 < fast["first_tick"] < base["first_tick"]
+        assert fast["response_mm"] < base["response_mm"]
+        assert base["final_mm"] < off["final_mm"], (base, off)
+        assert fast["final_mm"] < min(base["final_mm"], fast["peak_mm"] * 0.5), fast
+        if fast["disturbance"] == "persistent":
+            # Sustained tracking with useful forward travel, even during the
+            # last half-second, rules out a lucky endpoint or stopping in place.
+            for corrected in (base, fast):
+                assert corrected["tail_rad"] < off["tail_rad"] * 0.1
+                assert corrected["tail_mm"] < off["tail_mm"] * 0.1
+                assert corrected["forward_mm"] > off["forward_mm"]
+        print(f'{fast["disturbance"].capitalize()} drift toward {fast["side"]}: basic/refined response '
+              f'{base["first_tick"] * 10}/{fast["first_tick"] * 10} ms, '
+              f'{base["response_mm"]:.1f}/{fast["response_mm"]:.1f} mm; '
+              f'final offset off/basic/refined '
+              f'{off["final_mm"]:.1f}/{base["final_mm"]:.1f}/{fast["final_mm"]:.1f} mm; '
+              f'late peak heading {off["tail_rad"]:.3f}/{base["tail_rad"]:.3f}/{fast["tail_rad"]:.3f} rad; '
+              f'forward {off["forward_mm"]:.1f}/{base["forward_mm"]:.1f}/{fast["forward_mm"]:.1f} mm')

@@ -37,6 +37,10 @@ export interface Telemetry {
   ready: boolean;
   pose_source: 'odometry';
 }
+export interface DriftSettings {
+  drift_correction: boolean;
+  drift_path_recovery: boolean;
+}
 export interface DashboardState {
   simulation: {
     status: 'idle' | 'running' | 'completed' | 'cancelled' | 'failed';
@@ -50,6 +54,8 @@ export interface DashboardState {
   };
   robot: {
     status: 'disconnected' | 'connecting' | 'connected' | 'error';
+    connection_id: string | null;
+    settings: DriftSettings | null;
     message: string;
     telemetry: Telemetry | null;
     history: Telemetry[];

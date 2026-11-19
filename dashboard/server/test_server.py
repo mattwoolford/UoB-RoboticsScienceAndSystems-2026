@@ -17,10 +17,13 @@ from .simulations import SimulationService
 class FakeRobot:
     """Use a real localhost socket, fragmenting records as real TCP can do."""
 
-    def __init__(self, robot_name=None, withhold_ack=None):
+    def __init__(self, robot_name=None, withhold_ack=None, settings=None):
         self.hello = dict(type='hello', protocol=1)
         if robot_name is not None:
             self.hello['robot'] = robot_name
+        if settings is not None:
+            self.hello['settings'] = dict(settings)
+        self.reject_settings = False
         self.listener = socket.socket()
         self.listener.bind(('127.0.0.1', 0))
         self.listener.listen()
@@ -59,6 +62,16 @@ class FakeRobot:
                             split = len(hello) // 2
                             connection.sendall(hello[:split])
                             connection.sendall(hello[split:])
+                        elif command.startswith('SETTINGS '):
+                            _, correction, recovery = command.split()
+                            ack = dict(type='ack', command='SETTINGS', ok=not self.reject_settings)
+                            if self.reject_settings:
+                                ack['error'] = 'settings_write_failed'
+                            else:
+                                ack['settings'] = dict(drift_correction=correction == '1',
+                                                       drift_path_recovery=recovery == '1')
+                                self.hello['settings'] = ack['settings']
+                            connection.sendall((json.dumps(ack) + '\n').encode())
                         elif command.startswith(('START', 'CALIBRATE', 'STOP')) and command != self.withhold_ack:
                             ack = dict(type='ack', command=command.split()[0], ok=command != 'START line_follow',
                                        error='Calibrate first.')
@@ -150,6 +163,23 @@ class RobotChecks(unittest.TestCase):
         service._record({'type': 'hello', 'protocol': 1, 'robot': 'arbitrary-name'})
         self.assertTrue(service.hello_event.is_set())
 
+    def test_settings_require_firmware_support_and_well_typed_records(self):
+        fake = FakeRobot()
+        service = RobotService()
+        try:
+            service.connect('127.0.0.1', fake.port)
+            state = service.snapshot()
+            self.assertIsNone(state['settings'])
+            with self.assertRaisesRegex(ValueError, 'support drift settings'):
+                service.set_settings(dict(connection_id=state['connection_id'],
+                                          drift_correction=True, drift_path_recovery=False))
+            self.assertFalse(any(line.startswith('SETTINGS ') for line in fake.commands))
+            with self.assertRaisesRegex(ValueError, 'boolean'):
+                service._record(dict(type='hello', protocol=1,
+                                     settings=dict(drift_correction=1, drift_path_recovery=True)))
+        finally:
+            service.disconnect()
+
     def test_invalid_targets_and_samples(self):
         service = RobotService()
         for host in ('example.com', '8.8.8.8', '0.0.0.0'):
@@ -167,6 +197,50 @@ class HttpChecks(unittest.TestCase):
                           headers={'Content-Type': 'application/json'})
         with urlopen(request, timeout=5) as response:
             return json.load(response)
+
+    def test_robot_settings_round_trip_and_connection_scope(self):
+        initial = dict(drift_correction=False, drift_path_recovery=True)
+        updated = dict(drift_correction=True, drift_path_recovery=False)
+        with DashboardServer(('127.0.0.1', 0)) as server:
+            worker = threading.Thread(target=server.serve_forever, daemon=True)
+            worker.start()
+            url = f'http://127.0.0.1:{server.server_port}'
+
+            def robot_state():
+                with urlopen(url + '/api/state') as response:
+                    return json.load(response)['robot']
+
+            try:
+                fake = FakeRobot(settings=initial)
+                self.post(url, '/api/robot/connect', {'host': '127.0.0.1', 'port': fake.port})
+                state = robot_state()
+                self.assertEqual(state['settings'], initial)
+                draft = dict(updated, connection_id=state['connection_id'])
+                for invalid in ({}, dict(draft, drift_correction=1), dict(draft, drift_path_recovery='true')):
+                    with self.assertRaises(HTTPError):
+                        self.post(url, '/api/robot/settings', invalid)
+                self.assertFalse(any(line.startswith('SETTINGS ') for line in fake.commands))
+                fake.reject_settings = True
+                with self.assertRaises(HTTPError) as result:
+                    self.post(url, '/api/robot/settings', draft)
+                self.assertEqual(json.load(result.exception)['error'], 'settings_write_failed')
+                self.assertEqual(robot_state()['settings'], initial)
+                fake.reject_settings = False
+                self.assertEqual(self.post(url, '/api/robot/settings', draft), dict(ok=True, settings=updated))
+                self.assertIn('SETTINGS 1 0', fake.commands)
+                self.assertEqual(robot_state()['settings'], updated)
+                self.post(url, '/api/robot/disconnect', {})
+                self.assertIsNone(robot_state()['settings'])
+                replacement = FakeRobot(settings=initial)
+                self.post(url, '/api/robot/connect', {'host': '127.0.0.1', 'port': replacement.port})
+                with self.assertRaises(HTTPError):
+                    self.post(url, '/api/robot/settings', draft)
+                self.assertEqual(robot_state()['settings'], initial)
+                self.assertFalse(any(line.startswith('SETTINGS ') for line in replacement.commands))
+            finally:
+                server.robot.disconnect()
+                server.shutdown()
+                worker.join()
 
     def test_robot_stop_bypasses_pending_calibration_http_request(self):
         fake = FakeRobot(withhold_ack='CALIBRATE')

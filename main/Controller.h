@@ -6,6 +6,7 @@
 #include "TaskTimer.h"
 #include "OdometryModel.h"
 #include "MotorCalibration.h"
+#include "DriftCorrection.h"
 
 /**
  * @brief Supplies the nominal line-following controller for the StampC3 example.
@@ -101,6 +102,13 @@ class Controller_c {
     /** @brief True while a managed action or an unacknowledged stop is active. */
     bool dashboardBusy() const;
 
+    /** @brief Load this robot's saved flags once at startup. */
+    bool loadSettings();
+    /** @brief The last confirmed settings, or null when persistent storage is unavailable. */
+    const DriftSettings* savedDriftSettings() const { return settings_available ? &drift_settings : nullptr; }
+    /** @brief Commit both flags together for subsequent runs. */
+    bool saveSettings(const DriftSettings& settings);
+
   private:
     // Dashboard mode is opt-in so existing controller callers retain their API.
     enum class DashboardAction { IDLE, CALIBRATING, OPEN_LOOP, LINE_FOLLOW, MOTOR_TEST };
@@ -110,7 +118,7 @@ class Controller_c {
     DashboardAction dashboard_action = DashboardAction::IDLE;
     unsigned long dashboard_started_ms = 0;
     /** @brief Advances one managed action after sensor and odometry acquisition. */
-    void updateDashboard(Robot_c &robot, unsigned long now);
+    void updateDashboard(Robot_c &robot, unsigned long now, bool fresh_odometry);
     /** @brief Internal modes used by the nominal line-following demonstration. */
     enum Mode {
       WAITING,
@@ -141,6 +149,9 @@ class Controller_c {
     float right_wheel_speed;
     /** @brief Owns the independent forward deadband measurements and ramp state. */
     MotorCalibration_c motor_calibration;
+    DriftCorrection_c drift_correction;
+    DriftSettings drift_settings{};
+    bool settings_available = false;
     /** @brief Whether or not the motor deadband has been calibrated */
     bool motor_deadband_calibrated;
     unsigned long recovery_start_ms;
@@ -153,7 +164,10 @@ class Controller_c {
     void monitorWheelSpeed(Robot_c &robot, unsigned long now, float sampling_rate_hz = 10.0);
 
     /** @brief Runs a start/stop test for the motors. */
-    void motorStartStopTest(Robot_c &robot, unsigned long now);
+    void motorStartStopTest(Robot_c &robot, unsigned long now, bool fresh_odometry);
+
+    /** @brief Computes forward commands shared by the legacy and managed motor tests. */
+    void motorTestPWM(unsigned long now, bool fresh_odometry, float &left, float &right);
 
     /** @brief Runs a speed ramp test for the motors. */
     void motorSpeedRampTest(Robot_c &robot, unsigned long now);

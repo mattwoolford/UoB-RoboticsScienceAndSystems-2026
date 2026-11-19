@@ -32,6 +32,9 @@ void setup() {
   robot.initialise();
   // Boot stopped: calibration and driving require an explicit user action.
   controller.enableDashboardControl(robot);
+  if (!controller.loadSettings()) {
+    Serial.println("Drift settings unavailable. Using firmware defaults.");
+  }
 //  robot.initialise("team name");
 
 
