@@ -45,17 +45,6 @@ void loop() {
   // controller continues to run even when no client is connected.
   server.update();
 
-  // Play a tone when the button is pressed
-  bool button_state = robot.isButtonPressed();
-  if( button_state == true ) {
-    robot.playTone( Sound::BASE, 50 );
-    delay(100);
-    robot.playTone(
-      static_cast<uint16_t>(Sound::transposeFrequency(Sound::BASE, Sound::Octave(2))),
-      50
-    );
-  }
-
   
   // Run an iteration of the robot controller code.
   // Develop controller routines in Controller.cpp; edit parameters in Controller.h.
@@ -69,6 +58,16 @@ void loop() {
     lastFlash = now;
     ledOn = !ledOn;
     robot.setLED(50, 255, 25, ledOn ? 100 : 0);
+  }
+
+  bool button_state = robot.isButtonPressed();
+  if( button_state == true ) {
+    robot.playTone( Sound::BASE, 50 );
+    delay(100);
+    robot.playTone(
+      static_cast<uint16_t>(Sound::transposeFrequency(Sound::BASE, Sound::Octave(2))),
+      50
+    );
   }
 
 }

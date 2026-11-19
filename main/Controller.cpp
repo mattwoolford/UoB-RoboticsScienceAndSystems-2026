@@ -19,8 +19,7 @@ void Controller_c::reset() {
   signal = 0;
   mode = WAITING;
   recovery_start_ms = 0;
-  call_count = 0;
-  motor_pwm = 0;
+
 }
 
 uint8_t Controller_c::getSignal() const {
@@ -86,8 +85,8 @@ void Controller_c::update(Robot_c &robot, RobotWifiAP_c &server) {
   // The user has started the demonstration, so we run the line following
   // controller code.
   if (signal == 1) {
-    // runLineFollower(robot, now);
-    motorStartStopTest(robot, now);
+    runLineFollower(robot, now);
+
   }
 
   // Use another TaskTimer_c to limit how often we transmit telemetry data
@@ -106,31 +105,6 @@ bool Controller_c::lineDetected(const Robot_c &robot) const {
   }
 
   return false;
-}
-
-void Controller_c::motorStartStopTest(Robot_c &robot, unsigned long now) {
-
-  // Check call count to determine duration of function
-  if (call_count > 3000 / UPDATE_INTERVAL_MS) {
-
-    // Turn the motors off
-    robot.setMotorPWM(0, 0);
-
-    // Register that the function has completed
-    setSignal(0);
-
-    // Stop test
-    return;
-  }
-
-  // Start / continue test
-
-  // Increment call count
-  call_count++;
-
-  // Set the motors on
-  robot.setMotorPWM(50, 50);
-
 }
 
 void Controller_c::runLineFollower(Robot_c &robot, unsigned long now) {
