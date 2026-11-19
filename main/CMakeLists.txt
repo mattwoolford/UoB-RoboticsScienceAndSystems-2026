@@ -1,6 +1,8 @@
+# Compile the sketch directly so IDEs give it the firmware's include paths and
+# defines. LANGUAGE CXX also makes CMake pass -x c++ for the .ino extension.
 idf_component_register(
     SRCS
-        "arduino_sketch.cpp"
+        "main.ino"
         "Controller.cpp"
         "MotorCalibration.cpp"
         "OdometryModel.cpp"
@@ -14,9 +16,7 @@ idf_component_register(
     INCLUDE_DIRS "." "${ROBOT_LSM6_DIR}" "${ROBOT_LIS3MDL_DIR}"
     REQUIRES arduino-esp32 esp_wifi espressif__network_provisioning
 )
-# Expose the sketch to IDEs; arduino_sketch.cpp compiles it via #include.
-set_source_files_properties("main.ino" PROPERTIES HEADER_FILE_ONLY TRUE)
-target_sources(${COMPONENT_LIB} PRIVATE "main.ino")
+set_source_files_properties("main.ino" PROPERTIES LANGUAGE CXX)
 
 # The pinned Pololu driver rules out device_auto before its device-type switch.
 # Keep that upstream warning visible without failing the firmware build.
