@@ -2,7 +2,6 @@ idf_component_register(
     SRCS
         "arduino_sketch.cpp"
         "Controller.cpp"
-        "MotorCalibration.cpp"
         "OdometryModel.cpp"
         "Robot.cpp"
         "RobotIMU.cpp"

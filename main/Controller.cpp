@@ -20,6 +20,7 @@ void Controller_c::reset() {
   mode = WAITING;
   recovery_start_ms = 0;
   call_count = 0;
+  motor_pwm = 0;
   left_motor_pwm = 0;
   right_motor_pwm = 0;
   last_speed_measurement_ms = 0;
@@ -27,8 +28,6 @@ void Controller_c::reset() {
   last_right_wheel_encoder_count = 0;
   left_wheel_speed = 0;
   right_wheel_speed = 0;
-  motor_calibration = MotorCalibration_c();
-  motor_deadband_calibrated = false;
 }
 
 uint8_t Controller_c::getSignal() const {
@@ -91,31 +90,9 @@ void Controller_c::update(Robot_c &robot, RobotWifiAP_c &server) {
     }
   }
 
-  // Preserve automatic calibration on startup, while allowing sensor acquisition
-  // and WiFi servicing to continue between PWM steps. Calibration exclusively
-  // owns motor commands until both thresholds and the final stop are confirmed.
-  if (!motor_deadband_calibrated) {
-    const bool previously_failed = motor_calibration.hasFailed();
-    motor_deadband_calibrated = motor_calibration.update(robot);
-
-    // Calibration writes directly through Robot_c; keep controller caches aligned.
-    left_motor_pwm = robot.getLeftMotorPWM();
-    right_motor_pwm = robot.getRightMotorPWM();
-
-    if (motor_deadband_calibrated) {
-      Serial.print("Left motor deadband PWM: ");
-      Serial.println(motor_calibration.getLeftDeadbandPWM());
-      Serial.print("Right motor deadband PWM: ");
-      Serial.println(motor_calibration.getRightDeadbandPWM());
-    } else if (motor_calibration.hasFailed() && !previously_failed) {
-      Serial.println("Motor calibration failed: I2C error or no movement by PWM limit.");
-    }
-    // Failed attempts keep receiving updates so their stop command is retried.
-    // reset() prepares a fresh attempt; failure never enables driving routines.
-  }
-
-  // Driving routines may run only after calibration has successfully stopped.
-  if (signal == 1 && motor_deadband_calibrated) {
+  // The user has started the demonstration, so we run the line following
+  // controller code.
+  if (signal == 1) {
     // runLineFollower(robot, now);
     // motorStartStopTest(robot, now);
     // motorSpeedRampTest(robot, now);
@@ -126,7 +103,7 @@ void Controller_c::update(Robot_c &robot, RobotWifiAP_c &server) {
   // on WiFi and Serial.
   if (telemetry_timer.isReady(now)) {
     telemetry_timer.resetTimer(now);
-    // publishTelemetry(robot, server, now);
+    publishTelemetry(robot, server, now);
 
   }
 }
