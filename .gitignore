@@ -4,8 +4,3 @@
 /sdkconfig
 /sdkconfig.old
 /OriginalDigitalTwin
-# Local dashboard dependencies, generated assets, and immutable run exports.
-/dashboard/node_modules/
-/dashboard/dist/
-/dashboard/results/
-**/__pycache__/

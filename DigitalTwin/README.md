@@ -17,8 +17,8 @@ The robot stops at the final sample. Files have unique names to preserve trials.
 - **G** shows existing motor, sensor and encoder graphs.
 - **M** cycles from the experiment to sandbox, live comparison, and back.
   Leaving the experiment saves any partial results. Sandbox uses the main
-  project's current motor start/stop procedure; live comparison uses the legacy CSV TCP viewer. Use the new
-  [dashboard](../dashboard/README.md) for the firmware’s JSON WiFi protocol.
+  project's current motor start/stop procedure; live comparison needs firmware
+  telemetry to be enabled (it is currently commented out in `main/Controller.cpp`).
   Live mode cannot be changed while a live run is in progress.
 
 Read `signed_drift_mm` for lateral displacement of the robot centre from the
@@ -43,16 +43,15 @@ physics step. Keep the duration short enough to stay on the finite line
 
 ## What is synchronised with `main`
 
-- `Controller.pde` uses the same 10 ms update, 50 ms telemetry timer, line-follow PWM bias 45,
+- `Controller.pde` uses the same 10 ms update, 50 ms telemetry timer, PWM 45,
   gain 0.01, DN3 threshold 1400, and -35/+35 recovery with a 5 s timeout.
-  Its motor start/stop test retains the same call-count boundary; physical
-  constant runs use the independent `Controller_c::CONSTANT_PWM` setting.
-  The experiment explicitly selects `main`'s existing line-following
+  It includes the current motor start/stop test with the same call-count
+  boundary. The experiment explicitly selects `main`'s existing line-following
   routine, which is currently disabled in the firmware's `update()`.
 - `MotorCalibration.pde` ports the independent forward ramps: 300 ms per PWM
   step, at least three net encoder counts, maximum PWM 100, individual wheel
   stops, latched completion/failure, and start gating. As in `main`, detected
-  thresholds are not added to subsequent line-following commands.
+  thresholds are not added to subsequent driving commands.
 - `RobotSimulation.pde` truncates PWM towards zero to match `Robot.cpp` and
   exposes integer encoder counts. Model reads and writes always succeed.
 - `OdometryModel.pde` ports `main/OdometryModel`: equal nominal 16 mm radii,
@@ -61,7 +60,7 @@ physics step. Keep the duration short enough to stay on the finite line
   `DrivePhysics.pde` contains `DrivePhysics_c`, the separate continuous
   world-motion model. Sensor sampling, drawing and drift use its world pose.
 
-The dashboard firmware adds remote test control and JSON telemetry. Hardware transport,
+The main firmware and `OriginalDigitalTwin` are unchanged. Hardware transport,
 IMU, button feedback, and unused speed-monitor/ramp routines are not needed by
 this experiment and have not been simulated.
 

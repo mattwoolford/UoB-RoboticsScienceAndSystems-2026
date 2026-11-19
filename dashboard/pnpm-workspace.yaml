@@ -1,3 +1,0 @@
-# Keep this standalone app independent of any workspace in a parent directory.
-packages:
-  - '.'

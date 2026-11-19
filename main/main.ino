@@ -10,7 +10,6 @@ RobotWifiAP_c server("robot-matt", "abcde123", 80);
 #include "Robot.h"
 #include "RobotIMU.h"
 #include "Controller.h"
-#include "RobotDashboard.h"
 
 
 /** @brief Hardware-facing interface to the Pololu robot. */
@@ -19,8 +18,6 @@ Robot_c robot;
 RobotIMU_c imu;
 /** @brief Supplied nominal line-following controller. */
 Controller_c controller;
-/** @brief Owns remote commands, telemetry and the connection-loss stop lease. */
-RobotDashboard_c dashboard;
 
 
 /** @brief Initialises serial, WiFi, IMU, and the supplied robot-controller baseline. */
@@ -30,8 +27,6 @@ void setup() {
   server.begin();
 
   robot.initialise();
-  // Boot stopped: calibration and driving require an explicit user action.
-  controller.enableDashboardControl(robot);
 //  robot.initialise("team name");
 
 
@@ -60,15 +55,11 @@ static void updateStartButtonFeedback() {
   constexpr unsigned long NOTE_DURATION_MS = 50;
   if (robot.isButtonPressed()) {
     if (!second_note_pending) {
-      const bool local = !dashboard.sessionActive() && !controller.dashboardBusy();
-      // Outside a remote session, the first press calibrates; a later press runs
-      // the bounded motor test. A remote owner must use the dashboard controls.
-      const bool ready = local && (controller.dashboardReady()
-        ? controller.startFromDashboard(robot, "motor_test")
-        : controller.calibrateFromDashboard());
+      const bool ready = controller.isReadyToStart();
+      if (ready) controller.setSignal(1);
 
-      // Rising octave confirms the accepted calibration/test action; falling
-      // octave reports a busy controller or ownership by a remote operator.
+      // Rising octave confirms an accepted start; falling octave reports that
+      // calibration is incomplete/failed or the procedure has already started.
       // Store this result now, rather than rechecking after the first beep.
       second_note_frequency = static_cast<uint16_t>(Sound::transposeFrequency(
         Sound::BASE, Sound::Octave(ready ? 1 : -1)));
@@ -92,10 +83,9 @@ static void updateStartButtonFeedback() {
 
 /** @brief Maintains telemetry transport and runs the controller repeatedly. */
 void loop() {
-  // Maintain the dashboard TCP transport; lease expiry stops remote movement.
+  // Accept or maintain the optional Processing telemetry connection. The
+  // controller continues to run even when no client is connected.
   server.update();
-
-  dashboard.update(robot, controller, server);
 
   updateStartButtonFeedback();
 

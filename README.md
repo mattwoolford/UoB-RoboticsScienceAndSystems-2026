@@ -67,13 +67,8 @@ straight-line trial, with signed lateral drift exported every simulated second.
 See [the experiment instructions](DigitalTwin/README.md) for controls, CSV
 columns, synchronisation with `main`, and model assumptions.
 
-## Web dashboard
-
-Use the [Robot Lab dashboard](dashboard/README.md) to run single or batch simulation
-trials, inspect live trajectories and drift, download CSV/Excel results, and
-connect to the real robot over WiFi. The app uses Vite, React and TypeScript with
-a local Python simulation/TCP bridge. It replaces the Jupyter notebook setup.
-
-The robot now boots stopped and supports explicit calibration, bounded test runs,
-telemetry and connection-loss stopping. See the dashboard guide for installation,
-WiFi credentials, firmware behaviour, and verification commands.
+For repeatable Python-driven runs, CSV analysis, matplotlib plots, and comparison
+with noisy models and physical observations, open
+[the straight-line drift notebook](experiments/StraightLineDrift.ipynb).
+[Notebook setup](experiments/README.md) includes dependencies and the observation
+CSV format.

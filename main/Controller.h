@@ -34,8 +34,6 @@ class Controller_c {
     static const uint16_t LINE_THRESHOLD = 1400;
     /** @brief Nominal forward PWM bias for line following. */
     static constexpr float BASE_PWM = 45.0f;
-    /** @brief Equal PWM for physical open-loop runs and minimum for motor tests. */
-    static constexpr float CONSTANT_PWM = 100.0f;
     /** @brief Proportional gain applied to the DN2-minus-DN4 surface error. */
     static constexpr float LINE_FOLLOW_GAIN = 0.01f;
     /** @brief Left PWM used during the one-direction line-search rotation. */
@@ -86,31 +84,7 @@ class Controller_c {
      */
     void update(Robot_c &robot, RobotWifiAP_c &server);
 
-    /** @brief Opts production firmware into explicit, stopped-at-boot operation. */
-    void enableDashboardControl(Robot_c &robot);
-    /** @brief Starts an explicit calibration; rejected while another action runs. */
-    bool calibrateFromDashboard();
-    /** @brief Starts a bounded named test; open_loop uses uncompensated CONSTANT_PWM. */
-    bool startFromDashboard(Robot_c &robot, const char* test);
-    /** @brief Latches a stop and retries failed I2C stops on subsequent updates. */
-    bool stopFromDashboard(Robot_c &robot);
-    /** @brief Stable state names used by the WiFi dashboard protocol. */
-    const char* dashboardState() const;
-    /** @brief Reports whether calibration is complete and no action is running. */
-    bool dashboardReady() const;
-    /** @brief True while a managed action or an unacknowledged stop is active. */
-    bool dashboardBusy() const;
-
   private:
-    // Dashboard mode is opt-in so existing controller callers retain their API.
-    enum class DashboardAction { IDLE, CALIBRATING, OPEN_LOOP, LINE_FOLLOW, MOTOR_TEST };
-    bool dashboard_control = false;
-    bool dashboard_stop_pending = false;
-    bool dashboard_fault = false;
-    DashboardAction dashboard_action = DashboardAction::IDLE;
-    unsigned long dashboard_started_ms = 0;
-    /** @brief Advances one managed action after sensor and odometry acquisition. */
-    void updateDashboard(Robot_c &robot, unsigned long now);
     /** @brief Internal modes used by the nominal line-following demonstration. */
     enum Mode {
       WAITING,

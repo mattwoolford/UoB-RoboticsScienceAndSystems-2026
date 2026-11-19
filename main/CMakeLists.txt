@@ -9,7 +9,6 @@ idf_component_register(
         "Robot.cpp"
         "RobotIMU.cpp"
         "RobotWifiAP.cpp"
-        "RobotDashboard.cpp"
         "Sound.cpp"
         "TaskTimer.cpp"
         "${ROBOT_LSM6_DIR}/LSM6.cpp"
