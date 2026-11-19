@@ -60,6 +60,46 @@ Wire/Network/WiFi libraries, and 4 MB flash. Use `idf.py menuconfig` for local
 configuration changes. Commit the generated `dependencies.lock` when updating
 managed dependencies to preserve their resolved versions.
 
+### Encoder drift correction
+
+After connecting, open **Physical robot → Settings**, choose **Encoder drift
+correction** and **Path recovery**, and select **Save settings**. The robot
+saves both values in flash and reports them back to the dashboard. They apply
+to the next three-second **Motor start / stop** test, whether started from the
+dashboard or the local button. Power cycles, disconnects and subsequent runs
+preserve the saved values. You can turn either flag on or off independently.
+
+| `ROBOT_DRIFT_CORRECTION` | `ROBOT_DRIFT_PATH_RECOVERY` | Motor test behaviour |
+| --- | --- | --- |
+| OFF | Either | Uses the original forward PWM for each wheel. |
+| ON | OFF | Holds the starting heading. With nominal wheels, feedback begins at three net counts of difference between the encoders. |
+| ON | ON | Can react to one count of difference on the next 10 ms control update and steers back toward the starting line. |
+
+The CMake options set the defaults after a firmware flash. Both default to
+`OFF`. For example, this builds firmware with both defaults enabled.
+
+```sh
+idf.py -DROBOT_DRIFT_CORRECTION=ON -DROBOT_DRIFT_PATH_RECOVERY=ON build
+```
+
+Use `idf.py flash` for the first upgrade so the robot receives the new partition
+table. After that, both `idf.py flash` and `idf.py app-flash` write the dedicated
+`robot_settings` partition, restoring the build defaults even when reflashing
+the same firmware. For an existing build configuration that uses the former
+single-app-large partition table, select
+**Partition Table → Partition Table → Custom partition table CSV** in
+`idf.py menuconfig`, use `partitions.csv`, then run `idf.py flash`.
+Calibration, line following and the equal-PWM experiment use their own motor
+commands.
+
+The controller uses wheel travel from encoder odometry to estimate heading.
+Path recovery also measures the signed lateral offset from the axle's position
+and heading at the first drive command. It aims 75 mm ahead along that line.
+Both modes limit steering to ±30 PWM per wheel and learn a trim for a sustained
+motor imbalance over the run. Wheel slip or a sideways push that produces no
+encoder difference can leave a physical offset the controller cannot observe.
+The gains and lookahead are in [DriftCorrection.cpp](main/DriftCorrection.cpp).
+
 ## DigitalTwin straight-line experiment
 
 Open `DigitalTwin/DigitalTwin.pde` in Processing to run a sterile 30-second

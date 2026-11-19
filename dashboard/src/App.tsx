@@ -161,7 +161,7 @@ export default function App() {
               />
             ) : (
               <RobotConnection
-                robot={state?.robot}
+                robot={online ? state?.robot : undefined}
                 disabled={!online || !!pending}
                 act={act}
                 canStop={stops.canStopRobot}

@@ -15,6 +15,10 @@ class Controller_c {
   final float BASE_PWM = 45;
   // Shared by the motor start/stop test and open-loop simulation batches.
   static final int CONSTANT_PWM = 100;
+  // Sandbox straight-run features. Path recovery requires drift correction.
+  static final boolean ROBOT_DRIFT_CORRECTION = false;
+  static final boolean ROBOT_DRIFT_PATH_RECOVERY = false;
+  final DriftCorrection_c drift;
   final float LINE_FOLLOW_GAIN = 0.01;
   final float RECOVERY_LEFT_PWM = -35.0;
   final float RECOVERY_RIGHT_PWM = 35.0;
@@ -33,6 +37,14 @@ class Controller_c {
   /** @brief TaskTimer_c to keep aligned with code from Arduino platform */
   TaskTimer_c update_timer = new TaskTimer_c( UPDATE_INTERVAL_MS );
   TaskTimer_c telemetry_timer = new TaskTimer_c( TELEMETRY_INTERVAL_MS );
+
+  Controller_c() {
+    this(ROBOT_DRIFT_CORRECTION, ROBOT_DRIFT_PATH_RECOVERY);
+  }
+
+  Controller_c(boolean correctDrift, boolean recoverPath) {
+    drift = correctDrift ? new DriftCorrection_c(recoverPath) : null;
+  }
   
 
   /** @brief Returns the controller to its inactive waiting state. */
@@ -64,6 +76,7 @@ class Controller_c {
       return;
     }
     if (isReadyToStart()) {
+      if (drift != null) drift.reset();
       signal = 1;
       mode = FOLLOWING;
       recoveryStartMs = 0;
@@ -85,9 +98,8 @@ class Controller_c {
     update_timer.resetTimer( now );
 
     robot.getSurfaceSensors();
-    if (robot.getEncoders()) {
-      odometry.update(robot.getLeftEncoderCount(), robot.getRightEncoderCount());
-    }
+    boolean poseUpdated = robot.getEncoders()
+      && odometry.update(robot.getLeftEncoderCount(), robot.getRightEncoderCount());
     robot.getPose();
     
     if (!motor_deadband_calibrated) {
@@ -95,7 +107,7 @@ class Controller_c {
     }
     if (signal == 1 && motor_deadband_calibrated) {
       if (procedure == LINE_FOLLOW) runLineFollower(robot, now);
-      else motorStartStopTest(robot, now);
+      else motorStartStopTest(robot, now, poseUpdated);
     }
     
     if( telemetry_timer.isReady(now) ) {
@@ -107,7 +119,7 @@ class Controller_c {
   
   
   // Same call-count boundary and reset behaviour as main/Controller.cpp.
-  void motorStartStopTest(RobotSimulation_c robot, long now) {
+  void motorStartStopTest(RobotSimulation_c robot, long now, boolean poseUpdated) {
     int duration_ms = 3000;
     if (call_count > duration_ms / UPDATE_INTERVAL_MS) {
       robot.setMotorPWM(0, 0);
@@ -115,7 +127,9 @@ class Controller_c {
       return;
     }
     call_count++;
-    robot.setMotorPWM(CONSTANT_PWM, CONSTANT_PWM);
+    float trim = 0;
+    if (drift != null && poseUpdated) trim = drift.update(odometry, now);
+    robot.setMotorPWM(CONSTANT_PWM + trim, CONSTANT_PWM - trim);
   }
 
   /** @brief Tests whether the central surface channel is at or above the line threshold. */

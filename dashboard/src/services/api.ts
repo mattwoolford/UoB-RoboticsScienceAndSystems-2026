@@ -17,8 +17,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 export const getState = () => request<DashboardState>('state');
-export const post = (path: string, payload: object = {}) =>
-  request<unknown>(path, {
+export const post = <T = unknown>(path: string, payload: object = {}) =>
+  request<T>(path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),

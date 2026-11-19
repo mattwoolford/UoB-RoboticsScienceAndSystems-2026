@@ -8,6 +8,15 @@ import math
 import socket
 import threading
 import time
+import uuid
+
+
+def drift_settings(values):
+    """Only accept actual booleans for the two persisted firmware flags."""
+    keys = ('drift_correction', 'drift_path_recovery')
+    if not isinstance(values, dict) or any(type(values.get(key)) is not bool for key in keys):
+        raise ValueError('Both drift feature flags must be boolean values.')
+    return {key: values[key] for key in keys}
 
 
 def connection_error_message(error, host, port):
@@ -60,7 +69,8 @@ class RobotService:
         self.ack = None
         self.last_browser = 0
         self.last_telemetry = 0
-        self.state = dict(status='disconnected', message='Connect to the robot WiFi first.', telemetry=None)
+        self.state = dict(status='disconnected', message='Connect to the robot WiFi first.',
+                          telemetry=None, settings=None, connection_id=None)
         self.history = deque(maxlen=600)
 
     def snapshot(self):
@@ -102,7 +112,8 @@ class RobotService:
                 with self.lock:
                     if self.state['status'] == 'error':
                         raise ValueError(self.state['message'])
-                    self.state.update(status='connected', message=f'Connected to {address}:{port} over WiFi.')
+                    self.state.update(status='connected', message=f'Connected to {address}:{port} over WiFi.',
+                                      connection_id=uuid.uuid4().hex)
             except Exception as error:
                 self.disconnect()
                 message = connection_error_message(error, str(address), port)
@@ -131,13 +142,30 @@ class RobotService:
                 self.stop_generation += 1
                 self._send('STOP')
             return
-        # A STOP cancels starts that have been requested but not yet sent.
+        self._request(wire, wire + (' ' + procedure if command == 'start' else ''))
+
+    def set_settings(self, options):
+        """Save both flags on the same robot connection that supplied the draft."""
+        settings = drift_settings(options)
+        connection_id = options.get('connection_id')
+        if not isinstance(connection_id, str) or not connection_id:
+            raise ValueError('Robot settings require the current connection ID.')
+        line = 'SETTINGS {} {}'.format(int(settings['drift_correction']), int(settings['drift_path_recovery']))
+        return self._request('SETTINGS', line, connection_id)['settings']
+
+    def _request(self, wire, line, connection_id=None):
+        """Serialize acknowledged commands while keeping STOP available."""
         with self.write_lock:
             generation = self.stop_generation
         with self.command_lock:
             with self.lock:
                 if self.state['status'] != 'connected':
                     raise ValueError('Connect the robot before sending commands.')
+                if connection_id is not None:
+                    if self.state['connection_id'] != connection_id:
+                        raise ValueError('The robot connection changed. Reopen Settings and try again.')
+                    if self.state['settings'] is None:
+                        raise ValueError('Connected firmware does not support drift settings.')
                 if time.monotonic() - self.last_browser > 1.2:
                     raise ValueError('Browser heartbeat expired; reconnect the robot.')
                 self.pending, self.ack = wire, None
@@ -146,17 +174,18 @@ class RobotService:
                 with self.write_lock:
                     if generation != self.stop_generation:
                         raise ValueError('Command cancelled by Stop.')
-                    self._send(wire + (' ' + procedure if command == 'start' else ''))
+                    self._send(line)
                 if not self.ack_event.wait(2):
                     # A lost ACK must not leave motion running with an ambiguous UI.
                     self.disconnect()
                     raise ValueError('Robot acknowledgement timed out; disconnected and stop requested.')
-                if not self.ack.get('ok'):
+                if self.ack.get('ok') is not True:
                     raise ValueError(self.ack.get('error', 'Robot rejected the command.'))
-                if command == 'start':
+                if wire == 'START':
                     # Each start resets firmware odometry; never join separate trial paths.
                     with self.lock:
                         self.history.clear()
+                return self.ack
             finally:
                 with self.lock:
                     self.pending = None
@@ -166,10 +195,16 @@ class RobotService:
         # Compatibility is determined by protocol version, never the optional
         # robot label or WiFi SSID. Different robots can share the same AP address.
         if record.get('type') == 'hello' and record.get('protocol') == 1:
-            self.hello_event.set()
+            with self.lock:
+                self.state['settings'] = (drift_settings(record['settings'])
+                                          if record.get('settings') is not None else None)
+                self.hello_event.set()
         elif record.get('type') == 'ack':
             with self.lock:
                 if record.get('command') == self.pending:
+                    if self.pending == 'SETTINGS' and record.get('ok') is True:
+                        self.state['settings'] = drift_settings(record.get('settings'))
+                        record['settings'] = self.state['settings']
                     self.ack = record
                     self.ack_event.set()
         elif record.get('type') == 'telemetry':
@@ -224,7 +259,7 @@ class RobotService:
         except (OSError, ValueError) as error:
             if not self.stop_event.is_set():
                 with self.lock:
-                    self.state.update(status='error', message=str(error))
+                    self.state.update(status='error', message=str(error), settings=None, connection_id=None)
         finally:
             with self.write_lock:
                 try:
@@ -252,5 +287,6 @@ class RobotService:
             self.sock.close()
         self.sock = None
         with self.lock:
-            self.state.update(status='disconnected', message='Robot disconnected.', telemetry=None)
+            self.state.update(status='disconnected', message='Robot disconnected.', telemetry=None,
+                              settings=None, connection_id=None)
             self.history.clear()

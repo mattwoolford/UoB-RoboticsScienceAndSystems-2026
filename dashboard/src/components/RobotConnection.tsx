@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { DashboardState, Procedure } from '../types/dashboard';
 import { Icon } from './Icon';
+import { RobotSettings } from './RobotSettings';
 interface Props {
   robot?: DashboardState['robot'];
   disabled: boolean;
@@ -87,15 +88,26 @@ export function RobotConnection({
           </button>
         </fieldset>
       </form>
-      {connected && (
-        <button
-          className="button secondary full disconnect"
+      <div className="connection-actions">
+        <RobotSettings
+          key={connected ? (robot.connection_id ?? 'legacy') : 'disconnected'}
+          robot={robot}
           disabled={disabled}
-          onClick={() => void act('robot/disconnect')}
-        >
-          Disconnect robot
-        </button>
-      )}
+          canStop={canStop}
+          onStop={onStop}
+          stopFeedback={stopFeedback}
+          stopFailed={stopFailed}
+        />
+        {connected && (
+          <button
+            className="button secondary"
+            disabled={disabled}
+            onClick={() => void act('robot/disconnect')}
+          >
+            Disconnect robot
+          </button>
+        )}
+      </div>
       <hr />
       <label>
         Robot procedure
