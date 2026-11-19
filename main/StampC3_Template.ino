@@ -1,10 +1,9 @@
 #include <Wire.h>
 
 #include "RobotWifiAP.h"
-#include "Sound.h"
 
 /** @brief WiFi access-point and TCP server used for optional telemetry. */
-RobotWifiAP_c server("robot-matt", "abcde123", 80);
+RobotWifiAP_c server("myAP", "myPassword", 80);
 
 #include "Robot.h"
 #include "RobotIMU.h"
@@ -49,25 +48,5 @@ void loop() {
   // Run an iteration of the robot controller code.
   // Develop controller routines in Controller.cpp; edit parameters in Controller.h.
   controller.update(robot, server);
-
-  // Toggle the LED every second without pausing controller or WiFi updates.
-  static unsigned long lastFlash = 0;
-  static bool ledOn = false;
-
-  if (const unsigned long now = millis(); now - lastFlash >= 1000UL) {
-    lastFlash = now;
-    ledOn = !ledOn;
-    robot.setLED(50, 255, 25, ledOn ? 100 : 0);
-  }
-
-  bool button_state = robot.isButtonPressed();
-  if( button_state == true ) {
-    robot.playTone( Sound::BASE, 50 );
-    delay(100);
-    robot.playTone(
-      static_cast<uint16_t>(Sound::transposeFrequency(Sound::BASE, Sound::Octave(2))),
-      50
-    );
-  }
 
 }
