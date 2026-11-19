@@ -7,7 +7,7 @@ import processing.data.TableRow;
 public class SimulationBatch {
   /** Constant equal demand: no calibration, line following, or heading feedback. */
   static class MechanicalDriftExperiment extends DigitalTwin.StraightLineExperiment {
-    static final int DRIVE_PWM = 45;
+    static final int DRIVE_PWM = DigitalTwin.Controller_c.CONSTANT_PWM;
     // Explicit sentinel: controller is present only for encoder telemetry.
     static final int OPEN_LOOP_MODE = -1;
 
@@ -260,7 +260,8 @@ public class SimulationBatch {
         + "   |   Seed " + (batch.seed + batch.run), 20, 28);
       textSize(14);
       String state = batch.complete ? "Complete" : paused ? "Paused" :
-        "Open-loop equal PWM (45 / 45)";
+        "Open-loop equal PWM (" + batch.robot.getLeftMotorPWM() + " / "
+          + batch.robot.getRightMotorPWM() + ")";
       float elapsed = batch.experiment.samples.getRowCount() == 0 ? 0 :
         (batch.robot.getMillis() - batch.experiment.startMs) / 1000f;
       text(state + "   |   " + nf(elapsed, 0, 2) + " / 30.00 s   |   1x real time", 20, 54);

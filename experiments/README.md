@@ -29,8 +29,12 @@ The sterile baseline always runs once; noisy models use the selected trial count
 and successive deterministic seeds. Parallel execution runs candidates in
 separate Java processes. Trials within each candidate remain sequential.
 
-All these batches use `MechanicalDriftExperiment`: constant equal PWM **45 / 45**
+All these batches use `MechanicalDriftExperiment`: constant equal PWM **100 / 100**
 for 30 seconds, starting from rest, with no calibration, compensation or steering.
+The drive setting comes from `Controller_c.CONSTANT_PWM` in
+[`DigitalTwin/Controller.pde`](../DigitalTwin/Controller.pde), matching the physical
+constant-run setting. Live PWM labels and exported samples report the simulated
+robot's applied commands.
 Rows identify `drive_mode=open_loop_equal_pwm` and `controller_mode=-1`.
 The standalone Processing sketch's line-following experiment is a separate
 protocol; its results should not be pooled with these mechanical drift trials.

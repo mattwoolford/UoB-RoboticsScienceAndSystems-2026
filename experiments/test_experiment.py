@@ -221,13 +221,13 @@ class SimulationChecks(unittest.TestCase):
                 np.testing.assert_array_equal(frame.elapsed_s, np.arange(31))
                 self.assertTrue(frame.drive_mode.eq('open_loop_equal_pwm').all())
                 self.assertTrue(frame.controller_mode.eq(-1).all())
-                self.assertTrue(frame.left_pwm.eq(45).all() & frame.right_pwm.eq(45).all())
+                self.assertTrue(frame.left_pwm.eq(100).all() & frame.right_pwm.eq(100).all())
             # Constant unequal wheel velocities describe a circle, without steering.
-            speed = 56.25
+            speed = 125
             omega = speed * .015 / 90
             expected = speed / omega * (1 - np.cos(omega * right.elapsed_s))
-            # PDE physics uses forward Euler integration at 10 ms; allow its <0.1 mm error.
-            np.testing.assert_allclose(right.signed_drift_mm, expected, atol=.1)
+            # PDE physics uses forward Euler integration at 10 ms; allow its <0.4 mm error.
+            np.testing.assert_allclose(right.signed_drift_mm, expected, atol=.4)
             np.testing.assert_allclose(left.signed_drift_mm, -right.signed_drift_mm, atol=.03)
             self.assertGreater(right.signed_drift_mm.iloc[-1], 200)
             np.testing.assert_array_equal(frames['sensor'].signed_drift_mm, right.signed_drift_mm)
@@ -251,8 +251,9 @@ class SimulationChecks(unittest.TestCase):
             np.testing.assert_allclose(sterile.signed_drift_mm, 0, atol=0)
             np.testing.assert_allclose(sterile.centre_x_mm, zero.centre_x_mm, atol=1e-5)
             np.testing.assert_allclose(sterile.centre_y_mm, zero.centre_y_mm, atol=1e-5)
-            reference = pd.read_csv(ROOT/'DigitalTwin/results/sterile-baseline.csv')
-            np.testing.assert_allclose(sterile.forward_mm, reference.forward_mm, atol=1e-5)
+            # The open-loop batch now uses PWM 100; the stored line-following
+            # baseline remains a separate protocol at its original PWM bias.
+            np.testing.assert_allclose(sterile.forward_mm, sterile.elapsed_s * 125, atol=1e-5)
             self.assertEqual(len(a), 62)
             with self.assertRaises(ValueError):
                 simulation.run(directory/'bad.csv', model_id='sterile', sensor_noise_counts=1)

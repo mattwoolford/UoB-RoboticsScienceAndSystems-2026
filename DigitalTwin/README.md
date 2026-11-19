@@ -45,8 +45,9 @@ physics step. Keep the duration short enough to stay on the finite line
 
 - `Controller.pde` uses the same 10 ms update, 50 ms telemetry timer, line-follow PWM bias 45,
   gain 0.01, DN3 threshold 1400, and -35/+35 recovery with a 5 s timeout.
-  Its motor start/stop test retains the same call-count boundary; physical
-  constant runs use the independent `Controller_c::CONSTANT_PWM` setting.
+  Its motor start/stop test retains the same call-count boundary and uses
+  `CONSTANT_PWM = 100`, matching the physical constant-run setting. Open-loop
+  [simulation batches](../experiments/README.md) share this simulation constant.
   The experiment explicitly selects `main`'s existing line-following
   routine, which is currently disabled in the firmware's `update()`.
 - `MotorCalibration.pde` ports the independent forward ramps: 300 ms per PWM
