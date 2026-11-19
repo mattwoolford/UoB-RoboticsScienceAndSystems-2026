@@ -11,20 +11,12 @@ class Controller_c {
   final int TELEMETRY_INTERVAL_MS = 50;
   final int RECOVERY_TIMEOUT_MS = 5000;
   final float LINE_THRESHOLD = 1400;
-  // Keep these values aligned with main/Controller.h.
+  // Keep these values aligned with StampC3_Template/Controller.h.
   final float BASE_PWM = 45;
   final float LINE_FOLLOW_GAIN = 0.01;
   final float RECOVERY_LEFT_PWM = -35.0;
   final float RECOVERY_RIGHT_PWM = 35.0;
   final int WAITING = 0, FOLLOWING = 1, SEARCHING = 2, STOPPED = 3;
-  // main/Controller.cpp currently selects MOTOR_START_STOP; the experiment
-  // explicitly selects its existing LINE_FOLLOW routine instead.
-  final int MOTOR_START_STOP = 0, LINE_FOLLOW = 1;
-  int procedure = MOTOR_START_STOP;
-  int call_count = 0;
-  OdometryModel_c odometry = new OdometryModel_c();
-  MotorCalibration_c motor_calibration = new MotorCalibration_c();
-  boolean motor_deadband_calibrated = false;
   int signal = 0, mode = WAITING;
   long recoveryStartMs = 0;
 
@@ -38,30 +30,22 @@ class Controller_c {
     signal = 0;
     mode = WAITING;
     recoveryStartMs = 0;
-    call_count = 0;
-    motor_calibration = new MotorCalibration_c();
-    motor_deadband_calibrated = false;
   }
   
-  boolean isReadyToStart() {
-    return motor_deadband_calibrated && !motor_calibration.hasFailed()
-      && signal == 0 && mode == WAITING;
-  }
-
   /** @return The latched start signal: 0 while waiting, 1 once started. */
   int getSignal() {
     return signal;
   }
   /**
    * @brief Updates the latched start signal.
-   * @param requested Zero resets; non-zero starts only after calibration succeeds.
+   * @param requested Zero resets the controller; a non-zero value starts it.
    */
   void setSignal(int requested) {
     if (requested == 0) {
       reset();
       return;
     }
-    if (isReadyToStart()) {
+    if (signal == 0) {
       signal = 1;
       mode = FOLLOWING;
       recoveryStartMs = 0;
@@ -83,17 +67,11 @@ class Controller_c {
     update_timer.resetTimer( now );
 
     robot.getSurfaceSensors();
-    if (robot.getEncoders()) {
-      odometry.update(robot.getLeftEncoderCount(), robot.getRightEncoderCount());
-    }
+    robot.getEncoders();
     robot.getPose();
     
-    if (!motor_deadband_calibrated) {
-      motor_deadband_calibrated = motor_calibration.update(robot);
-    }
-    if (signal == 1 && motor_deadband_calibrated) {
-      if (procedure == LINE_FOLLOW) runLineFollower(robot, now);
-      else motorStartStopTest(robot, now);
+    if (signal == 1) {
+      runLineFollower(robot, now);
     }
     
     if( telemetry_timer.isReady(now) ) {
@@ -104,19 +82,7 @@ class Controller_c {
   
   
   
-  // Same call-count boundary and reset behaviour as main/Controller.cpp.
-  void motorStartStopTest(RobotSimulation_c robot, long now) {
-    int duration_ms = 3000;
-    if (call_count > duration_ms / UPDATE_INTERVAL_MS) {
-      robot.setMotorPWM(0, 0);
-      setSignal(0);
-      return;
-    }
-    call_count++;
-    robot.setMotorPWM(BASE_PWM, BASE_PWM);
-  }
-
-  /** @brief Tests whether the central surface channel is at or above the line threshold. */
+  /** @brief Tests whether any surface channel is at or above the line threshold. */
   boolean lineDetected(RobotSimulation_c robot) {
     if (robot.surface.reading[2] >= LINE_THRESHOLD) return true;
     return false;

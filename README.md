@@ -59,16 +59,3 @@ the local installation fallback in `CMakeLists.txt`.
 Wire/Network/WiFi libraries, and 4 MB flash. Use `idf.py menuconfig` for local
 configuration changes. Commit the generated `dependencies.lock` when updating
 managed dependencies to preserve their resolved versions.
-
-## DigitalTwin straight-line experiment
-
-Open `DigitalTwin/DigitalTwin.pde` in Processing to run a sterile 30-second
-straight-line trial, with signed lateral drift exported every simulated second.
-See [the experiment instructions](DigitalTwin/README.md) for controls, CSV
-columns, synchronisation with `main`, and model assumptions.
-
-For repeatable Python-driven runs, CSV analysis, matplotlib plots, and comparison
-with noisy models and physical observations, open
-[the straight-line drift notebook](experiments/StraightLineDrift.ipynb).
-[Notebook setup](experiments/README.md) includes dependencies and the observation
-CSV format.
