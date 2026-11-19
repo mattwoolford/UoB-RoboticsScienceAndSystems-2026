@@ -132,9 +132,6 @@ class Controller_c {
     /** @brief Runs a speed ramp test for the motors. */
     void motorSpeedRampTest(Robot_c &robot, unsigned long now);
 
-    /** @brief Returns to waiting only after a successful stop, retaining calibration. */
-    void finishMotorTest(Robot_c &robot);
-
     /** @brief Applies the nominal controller behaviour for the current mode. */
     void runLineFollower(Robot_c &robot, unsigned long now);
 

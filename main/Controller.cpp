@@ -189,7 +189,11 @@ void Controller_c::motorStartStopTest(Robot_c &robot, unsigned long now) {
   // Check call count to determine duration of function
   if (call_count > duration_ms / UPDATE_INTERVAL_MS) {
 
-    finishMotorTest(robot);
+    // Turn the motors off
+    setMotorPWM(robot, 0, 0);
+
+    // Register that the function has completed
+    setSignal(0);
 
     // Stop test
     return;
@@ -201,10 +205,7 @@ void Controller_c::motorStartStopTest(Robot_c &robot, unsigned long now) {
   call_count++;
 
   // Set the motors on
-  // A fixed PWM can be below the starting threshold measured on this robot.
-  setMotorPWM(robot,
-              max(BASE_PWM, motor_calibration.getLeftDeadbandPWM() + 5.0f),
-              max(BASE_PWM, motor_calibration.getRightDeadbandPWM() + 5.0f));
+  setMotorPWM(robot, BASE_PWM, BASE_PWM);
 
 }
 
@@ -215,7 +216,11 @@ void Controller_c::motorSpeedRampTest(Robot_c &robot, unsigned long now) {
   // Check call count to determine duration of function
   if (call_count > duration_ms / UPDATE_INTERVAL_MS) {
 
-    finishMotorTest(robot);
+    // Turn the motors off
+    robot.setMotorPWM(0, 0);
+
+    // Register that the function has completed
+    setSignal(0);
 
     // Stop test
     return;
@@ -250,17 +255,6 @@ void Controller_c::motorSpeedRampTest(Robot_c &robot, unsigned long now) {
 
   }
 
-}
-
-void Controller_c::finishMotorTest(Robot_c &robot) {
-  // Retry a failed stop on the next update, without resuming the test.
-  if (!robot.setMotorPWM(0, 0)) return;
-  left_motor_pwm = 0;
-  right_motor_pwm = 0;
-  call_count = 0;
-  signal = 0;
-  mode = WAITING;
-  // Keep the calibration: reset()/setSignal(0) would start another motor ramp.
 }
 
 void Controller_c::runLineFollower(Robot_c &robot, unsigned long now) {
