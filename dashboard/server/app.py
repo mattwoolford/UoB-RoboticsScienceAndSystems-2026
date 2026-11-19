@@ -121,9 +121,6 @@ class Handler(BaseHTTPRequestHandler):
                 self.server.robot.disconnect()
             elif route == '/api/robot/command':
                 self.server.robot.command(options.get('command'), options.get('procedure'))
-            elif route == '/api/robot/settings':
-                settings = self.server.robot.set_settings(options)
-                return self.reply(200, {'ok': True, 'settings': settings})
             elif route == '/api/heartbeat':
                 self.server.robot.heartbeat()
             else:

@@ -6,8 +6,7 @@ CONFIG_ARDUINO_SELECTIVE_Wire=y
 CONFIG_ARDUINO_SELECTIVE_Network=y
 CONFIG_ARDUINO_SELECTIVE_WiFi=y
 CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
-CONFIG_PARTITION_TABLE_CUSTOM=y
-CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
 
 # Arduino defaults every library to enabled, even with selective compilation.
 # This firmware only needs Wire, Network and WiFi.

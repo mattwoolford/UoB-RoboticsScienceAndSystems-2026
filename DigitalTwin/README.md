@@ -50,14 +50,6 @@ physics step. Keep the duration short enough to stay on the finite line
   [simulation batches](../experiments/README.md) share this simulation constant.
   The experiment explicitly selects `main`'s existing line-following
   routine, which is currently disabled in the firmware's `update()`.
-- For the sandbox motor start/stop run, set `ROBOT_DRIFT_CORRECTION` to
-  `true` in `Controller.pde` to steer from the difference in wheel travel.
-  Set `ROBOT_DRIFT_PATH_RECOVERY` to `true` as well to respond to smaller
-  heading errors and steer back toward the line through the starting pose.
-  Both default to `false`. The twin uses its own flags, set independently
-  of the firmware build. The controller takes its measurements from encoder
-  odometry. The ideal plant has identical motors, so the headless tests
-  introduce asymmetric wheel travel to exercise the two modes.
 - `MotorCalibration.pde` ports the independent forward ramps: 300 ms per PWM
   step, at least three net encoder counts, maximum PWM 100, individual wheel
   stops, latched completion/failure, and start gating. As in `main`, detected
@@ -105,8 +97,7 @@ python3 tests/run_digital_twin_tests.py
 The script compiles the complete PDE sketch using Processing, then executes
 its actual Java classes without a window or network. It verifies two identical
 30-second trials, sampling boundaries, motion duration, calibration gating,
-PWM truncation, drift signs, response time and travel before correction,
-return toward the starting path, line-search recovery, main's start/stop boundary, odometry,
+PWM truncation, drift signs, recovery, main's start/stop boundary, odometry,
 and CSV round-trip. Sign/recovery tests use separate fixtures; they do not add
 any disturbance to the sterile trial. Use `--processing-resources PATH` to
 specify a different Processing resources folder (containing `jdk` and

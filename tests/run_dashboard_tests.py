@@ -10,9 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # checked without attaching a robot or issuing any physical motor commands.
 with tempfile.TemporaryDirectory(prefix="robot-dashboard-") as directory:
     work = Path(directory)
-    shutil.copy(ROOT / "main/DriftSettings.h", work)
-    shutil.copy(ROOT / "tests/fake_drift_settings.cpp", work)
-    for stem in ("Controller", "DriftCorrection", "RobotDashboard", "MotorCalibration", "OdometryModel", "TaskTimer"):
+    for stem in ("Controller", "RobotDashboard", "MotorCalibration", "OdometryModel", "TaskTimer"):
         for suffix in (".cpp", ".h"):
             shutil.copy(ROOT / "main" / (stem + suffix), work)
     (work / "Arduino.h").write_text(r'''
@@ -78,14 +76,12 @@ struct RobotWifiAP_c {
 #include <cassert>
 #include <cstring>
 #include <iostream>
-extern bool fail_settings_write;
 int main() {
   Controller_c controller;
   Robot_c robot;
   RobotWifiAP_c server;
   RobotDashboard_c dashboard;
   controller.enableDashboardControl(robot);
-  assert(controller.loadSettings());
   auto tick = [&] {
     clock_ms += 10;
     if (robot.left > 0) ++robot.left_count;
@@ -93,12 +89,7 @@ int main() {
     dashboard.update(robot, controller, server);
     controller.update(robot, server);
   };
-  auto command = [&](std::string value) {
-    const auto offset = server.output.size();
-    server.input += value + "\n";
-    tick();
-    return server.output.substr(offset);
-  };
+  auto command = [&](std::string value) { server.input += value + "\n"; tick(); };
   auto expectTelemetryPWM = [&](int left, int right) {
     const auto offset = server.output.size();
     for (int i = 0; i < 5; ++i) tick();
@@ -110,16 +101,9 @@ int main() {
   assert(robot.left == 0 && robot.right == 0); // Boot never calibrates or moves.
   command("START open_loop");
   assert(server.output.find("hello_required") != std::string::npos);
-  assert(command("SETTINGS 1 1").find("hello_required") != std::string::npos);
-  assert(command("HELLO").find("\"drift_correction\":false,\"drift_path_recovery\":false") != std::string::npos);
+  command("HELLO");
   assert(dashboard.sessionActive());
   assert(server.output.find("\"protocol\":1") != std::string::npos);
-  assert(command("SETTINGS 0 1").find("\"drift_correction\":false,\"drift_path_recovery\":true") != std::string::npos);
-  assert(command("SETTINGS 2 0").find("invalid_settings") != std::string::npos);
-  fail_settings_write = true;
-  assert(command("SETTINGS 1 1").find("settings_write_failed") != std::string::npos);
-  assert(command("HELLO").find("\"drift_correction\":false,\"drift_path_recovery\":true") != std::string::npos);
-  fail_settings_write = false;
   command("START line_follow");
   assert(robot.left == 0); // Calibration required for closed-loop/motor test.
   command("START open_loop");
@@ -174,28 +158,6 @@ int main() {
   command("START motor_test");
   assert(robot.left == 100 && robot.right == 100);
   expectTelemetryPWM(100, 100);
-  assert(command("SETTINGS 1 1").find("\"drift_correction\":true,\"drift_path_recovery\":true") != std::string::npos);
-  robot.right_count += 5;
-  tick();
-  assert(robot.left == robot.right);  // A save cannot change steering mid-run.
-  command("STOP");
-  command("START motor_test");
-  ++robot.right_count;
-  tick();
-  assert(robot.left > robot.right);   // New run uses saved path recovery on first tick of mismatch.
-  command("STOP");
-  command("SETTINGS 1 0");
-  command("START motor_test");
-  ++robot.right_count;
-  tick();
-  assert(robot.left == robot.right);  // Basic mode waits for a larger difference.
-  robot.right_count += 4;
-  tick();
-  assert(robot.left > robot.right);
-  Controller_c rebooted;
-  assert(rebooted.loadSettings());
-  rebooted.reset();
-  assert(rebooted.savedDriftSettings()->correction && !rebooted.savedDriftSettings()->pathRecovery);
   command("STOP");
   command("START open_loop");
   for (int i = 0; i < 3100; ++i) {

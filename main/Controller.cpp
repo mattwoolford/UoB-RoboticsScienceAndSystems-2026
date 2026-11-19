@@ -33,20 +33,6 @@ void Controller_c::reset() {
   motor_deadband_calibrated = false;
 }
 
-bool Controller_c::loadSettings() {
-  settings_available = loadDriftSettings(drift_settings);
-  return settings_available;
-}
-
-bool Controller_c::saveSettings(const DriftSettings& settings) {
-  if (!settings_available) return false;
-  if (settings.correction == drift_settings.correction &&
-      settings.pathRecovery == drift_settings.pathRecovery) return true;
-  if (!saveDriftSettings(settings)) return false;
-  drift_settings = settings;
-  return true;
-}
-
 uint8_t Controller_c::getSignal() const {
   return signal;
 }
@@ -63,7 +49,6 @@ void Controller_c::setSignal(uint8_t requested_signal) {
   }
 
   if (isReadyToStart()) {
-    drift_correction.beginRun(drift_settings);
     signal = 1;
     mode = FOLLOWING_LINE;
     recovery_start_ms = 0;
@@ -97,8 +82,9 @@ void Controller_c::update(Robot_c &robot, RobotWifiAP_c &server) {
   // Ask the robot for the latest encoder information, and then use this
   // to update the odometry on board the StampC3 (see OdometryModel.h).
   const bool encoders_fresh = robot.getEncoders();
-  const bool fresh_odometry = encoders_fresh &&
-      odometry.update(robot.getLeftEncoderCount(), robot.getRightEncoderCount());
+  if (encoders_fresh) {
+    odometry.update(robot.getLeftEncoderCount(), robot.getRightEncoderCount());
+  }
 
   // Pose estimation from the Pololu 3Pi robot itself.
   robot.getPose();
@@ -111,7 +97,7 @@ void Controller_c::update(Robot_c &robot, RobotWifiAP_c &server) {
       dashboard_fault = true;
       stopFromDashboard(robot);
     }
-    updateDashboard(robot, now, fresh_odometry);
+    updateDashboard(robot, now);
     return;
   }
 
@@ -144,7 +130,7 @@ void Controller_c::update(Robot_c &robot, RobotWifiAP_c &server) {
   // Driving routines may run only after calibration has successfully stopped.
   if (signal == 1 && motor_deadband_calibrated) {
     // runLineFollower(robot, now);
-    motorStartStopTest(robot, now, fresh_odometry);
+    motorStartStopTest(robot, now);
     // motorSpeedRampTest(robot, now);
     // monitorWheelSpeed(robot, now);
   }
@@ -211,7 +197,7 @@ void Controller_c::monitorWheelSpeed(Robot_c &robot, unsigned long now, float sa
 
 }
 
-void Controller_c::motorStartStopTest(Robot_c &robot, unsigned long now, bool fresh_odometry) {
+void Controller_c::motorStartStopTest(Robot_c &robot, unsigned long now) {
 
   int duration_ms = 3000;
 
@@ -229,15 +215,12 @@ void Controller_c::motorStartStopTest(Robot_c &robot, unsigned long now, bool fr
   // Increment call count
   call_count++;
 
-  float left, right;
-  motorTestPWM(now, fresh_odometry, left, right);
-  setMotorPWM(robot, left, right);
-}
+  // Set the motors on
+  // A fixed PWM can be below the starting threshold measured on this robot.
+  setMotorPWM(robot,
+              max(CONSTANT_PWM, motor_calibration.getLeftDeadbandPWM() + 5.0f),
+              max(CONSTANT_PWM, motor_calibration.getRightDeadbandPWM() + 5.0f));
 
-void Controller_c::motorTestPWM(unsigned long now, bool fresh_odometry, float &left, float &right) {
-  const float trim = fresh_odometry ? drift_correction.trimPWM(odometry, now) : 0;
-  left = max(CONSTANT_PWM, motor_calibration.getLeftDeadbandPWM() + 5.0f) + trim;
-  right = max(CONSTANT_PWM, motor_calibration.getRightDeadbandPWM() + 5.0f) - trim;
 }
 
 void Controller_c::motorSpeedRampTest(Robot_c &robot, unsigned long now) {
@@ -443,12 +426,11 @@ bool Controller_c::startFromDashboard(Robot_c &robot, const char* test) {
   recovery_start_ms = 0;
   mode = FOLLOWING_LINE;
   signal = 1;
-  drift_correction.beginRun(drift_settings);
   dashboard_action = requested;
   return true;
 }
 
-void Controller_c::updateDashboard(Robot_c &robot, unsigned long now, bool fresh_odometry) {
+void Controller_c::updateDashboard(Robot_c &robot, unsigned long now) {
   if (dashboard_stop_pending) {
     stopFromDashboard(robot);
     return;
@@ -472,7 +454,8 @@ void Controller_c::updateDashboard(Robot_c &robot, unsigned long now, bool fresh
   }
   float left = CONSTANT_PWM, right = CONSTANT_PWM;
   if (dashboard_action == DashboardAction::MOTOR_TEST) {
-    motorTestPWM(now, fresh_odometry, left, right);
+    left = max(CONSTANT_PWM, motor_calibration.getLeftDeadbandPWM() + 5.0f);
+    right = max(CONSTANT_PWM, motor_calibration.getRightDeadbandPWM() + 5.0f);
   } else if (dashboard_action == DashboardAction::LINE_FOLLOW) {
     // Match the existing nominal line follower while checking every motor write.
     if (!lineDetected(robot) && mode == FOLLOWING_LINE) {

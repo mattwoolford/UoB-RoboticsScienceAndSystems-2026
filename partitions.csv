@@ -1,6 +1,0 @@
-# First three entries match the previous ESP-IDF single-app-large layout.
-# Name,         Type, SubType, Offset, Size,  Flags
-nvs,            data, nvs,     ,       0x6000,
-phy_init,       data, phy,     ,       0x1000,
-factory,        app,  factory, ,       1500K,
-robot_settings, data, nvs,     ,       0x4000,

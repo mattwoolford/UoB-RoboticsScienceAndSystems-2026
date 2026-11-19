@@ -9,55 +9,6 @@ public class HeadlessDigitalTwinTest {
   static void near(float actual, float expected, float tolerance, String message) {
     check(Math.abs(actual - expected) <= tolerance, message + ": " + actual + " != " + expected);
   }
-  record DriftResult(int responseMs, float responseDistance, float residual, float peak) {}
-
-  // Eight tenths of a second of extra wheel travel, followed by ideal traction.
-  // The controller sees only quantised encoders. We measure against the world
-  // trajectory from a translated, 90-degree-rotated start to test the path frame.
-  static DriftResult driftTrial(DigitalTwin app, boolean enabled, boolean recovery, int side) {
-    var robot = app.new RobotSimulation_c(16, 90, null, 0, 0);
-    var controller = app.new Controller_c(enabled, recovery);
-    robot.straightLine = app.new StraightLineExperiment();
-    robot.resetForRun(52, -7, (float)Math.PI / 2, 211, 336);
-    controller.odometry.reset(52, -7, (float)Math.PI / 2);
-    controller.odometry.update(211, 336);
-    controller.motor_deadband_calibrated = true;
-    controller.setSignal(1);
-    int responseMs = -1;
-    float responseDistance = 0, peak = 0;
-    for (int tick = 0; tick < 301; ++tick) {
-      robot.advanceTime(10);
-      controller.update(robot);
-      if (responseMs < 0 && robot.getLeftMotorPWM() != robot.getRightMotorPWM()) {
-        check(side * (robot.getLeftMotorPWM() - robot.getRightMotorPWM()) > 0, "Corrective steering sign");
-        responseMs = tick * 10;
-        responseDistance = robot.odometry.pose.y + 7;
-      }
-      robot.updatePhysics(10);
-      if (tick < 80) robot.odometry.update(side < 0 ? .22f : 0, side > 0 ? .22f : 0, 90);
-      peak = Math.max(peak, Math.abs(robot.odometry.pose.x - 52));
-    }
-    return new DriftResult(responseMs, responseDistance, Math.abs(robot.odometry.pose.x - 52), peak);
-  }
-
-  static void checkDriftCorrection(DigitalTwin app) {
-    for (int side : new int[]{-1, 1}) {
-      var off = driftTrial(app, false, false, side);
-      var recoveryOnly = driftTrial(app, false, true, side);
-      var basic = driftTrial(app, true, false, side);
-      var refined = driftTrial(app, true, true, side);
-      check(off.responseMs() == -1 && off.equals(recoveryOnly), "Master flag bypass");
-      check(basic.residual() < off.residual(), "Basic heading correction limits drift");
-      check(refined.responseMs() > 0 && refined.responseMs() < basic.responseMs()
-        && refined.responseDistance() < basic.responseDistance(), "Earlier encoder correction");
-      check(refined.peak() < basic.peak() && refined.residual() < refined.peak() / 2,
-        "Refined steering returns toward the original line");
-      System.out.printf("%s wheel ahead: basic response %d ms / %.2f mm, refined response %d ms / %.2f mm, "
-        + "refined lateral offset %.2f mm peak / %.2f mm final%n", side > 0 ? "Right" : "Left",
-        basic.responseMs(), basic.responseDistance(), refined.responseMs(), refined.responseDistance(),
-        refined.peak(), refined.residual());
-    }
-  }
   static DigitalTwin.StraightLineExperiment trial(DigitalTwin app) {
     var trial = app.new StraightLineExperiment();
     var robot = app.new RobotSimulation_c(16, 90, null, 0, 0);
@@ -90,7 +41,6 @@ public class HeadlessDigitalTwinTest {
   }
   public static void main(String[] args) {
     var app = new DigitalTwin();
-    checkDriftCorrection(app);
     var first = trial(app);
     var second = trial(app);
     for (int i = 0; i < first.samples.getRowCount(); i++) {
@@ -116,10 +66,10 @@ public class HeadlessDigitalTwinTest {
     controller.runLineFollower(robot, 5000);
     check(controller.mode == controller.STOPPED && robot.getLeftMotorPWM() == 0, "Recovery timeout");
     controller = app.new Controller_c();
-    for (int i = 0; i < 301; i++) controller.motorStartStopTest(robot, i * 10, true);
+    for (int i = 0; i < 301; i++) controller.motorStartStopTest(robot, i * 10);
     check(robot.getLeftMotorPWM() == 100 && robot.getRightMotorPWM() == 100,
       "Main start/stop PWM and call-count boundary");
-    controller.motorStartStopTest(robot, 3010, true);
+    controller.motorStartStopTest(robot, 3010);
     check(robot.getLeftMotorPWM() == 0, "Main start/stop stops");
     var odometry = app.new OdometryModel_c();
     check(!odometry.update(123, 123), "First counts establish baseline");

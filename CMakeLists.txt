@@ -45,19 +45,6 @@ set(ROBOT_LIS3MDL_DIR "${lis3mdl_SOURCE_DIR}")
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(RoboticsScienceAndSystems)
 
-# app-flash is created by project(). Restore the same build defaults on either
-# ESP-IDF flash route, including when reinstalling an identical application.
-partition_table_get_partition_info(settings_offset "--partition-name robot_settings" "offset")
-if(settings_offset)
-    esptool_py_flash_target_image(app-flash robot_settings "${settings_offset}"
-        "${CMAKE_BINARY_DIR}/robot_settings.bin" ALWAYS_PLAINTEXT)
-else()
-    message(WARNING "Select partitions.csv under Partition Table -> Custom partition table CSV in idf.py menuconfig to enable robot settings.")
-    # The image generator supplies a failing target when the partition is absent.
-    add_dependencies(flash nvs_robot_settings_bin)
-endif()
-add_dependencies(app-flash nvs_robot_settings_bin)
-
 # IDF 6.1's ESP32-C3 SPI headers use partial aggregate initializers. GCC 15
 # warns when Arduino includes them from C++; retain the warning without
 # promoting it to an error in this third-party component.

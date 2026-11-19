@@ -114,14 +114,6 @@ dashboard firmware. When swapping robots, disconnect in the dashboard, join the
 replacement robot’s network, update the address/port if needed, and reconnect.
 A new connection clears the previous robot’s telemetry and trajectory.
 
-In **Physical robot**, the **Settings** button sits directly below **Connect
-robot**. It becomes available once the robot connects. Open it to see the saved **Encoder drift
-correction** and **Path recovery** flags. Select **Save settings** to store both
-on that robot. The next **Motor start / stop** test uses the saved selection,
-including runs started from the physical button. Path recovery requires encoder
-drift correction to steer. Both selections persist across power cycles. A full
-firmware flash restores the defaults configured in the [firmware build](../README.md#encoder-drift-correction).
-
 The access-point name and password in `main/main.ino` configure the network that
 that particular firmware advertises (currently `robot-matt` / `abcde123`). They
 are not dashboard connection requirements; use the credentials of the robot you
@@ -169,12 +161,6 @@ uptime, odometry, encoder counts, PWM, five reflectance readings, readiness and
 controller state. `STOP` is accepted even before `HELLO`. The API returns after
 sending STOP; telemetry confirms the resulting state, including failed I2C stops.
 
-Firmware with persistent settings includes a `settings` object in its `HELLO`
-reply. It contains the booleans `drift_correction` and `drift_path_recovery`.
-Send `SETTINGS 1 0` to enable drift correction and disable path recovery.
-Each argument accepts `0` or `1`. A successful `SETTINGS` acknowledgement
-includes both saved values. Older firmware can still connect and run its tests.
-
 Run from the repository root:
 
 ```sh
@@ -182,7 +168,6 @@ pnpm --dir dashboard run build
 experiments/.venv/bin/python -m unittest dashboard.server.test_server -v
 (cd experiments && .venv/bin/python -m unittest test_experiment test_workbook_results)
 python3 tests/run_dashboard_tests.py
-python3 tests/run_drift_storage_tests.py
 python3 tests/run_controller_tests.py
 python3 tests/run_digital_twin_tests.py
 ```

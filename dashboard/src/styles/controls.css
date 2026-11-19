@@ -246,45 +246,8 @@ progress {
   grid-template-columns: 1fr 75px;
   gap: 10px;
 }
-.connection-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+.disconnect {
   margin-top: 10px;
-}
-.connection-actions > button {
-  flex: 1;
-}
-.robot-settings {
-  width: min(430px, calc(100% - 32px));
-  max-height: calc(100% - 32px);
-  padding: 24px;
-  color: var(--ink);
-  border: 1px solid var(--border);
-  border-radius: 11px;
-  box-shadow: 0 16px 64px #14243730;
-}
-.robot-settings::backdrop {
-  background: #14243780;
-}
-.settings-intro {
-  margin: 8px 0 22px;
-  font-size: 14px;
-  color: var(--muted);
-}
-.settings-actions,
-.settings-saved {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.settings-actions {
-  justify-content: flex-end;
-}
-.settings-saved {
-  color: #157267;
-  font-size: 14px;
-  margin-bottom: 16px;
 }
 .configuration hr {
   border: 0;

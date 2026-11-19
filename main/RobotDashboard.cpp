@@ -2,16 +2,6 @@
 #include <cstdio>
 #include <cstring>
 
-// HELLO and the save acknowledgement report the same persisted flag pair.
-static void sendWithSettings(RobotWifiAP_c &server, const char* fields, const DriftSettings& settings) {
-  char message[192];
-  const int size = snprintf(message, sizeof(message),
-      "{%s,\"settings\":{\"drift_correction\":%s,\"drift_path_recovery\":%s}}\n",
-      fields, settings.correction ? "true" : "false", settings.pathRecovery ? "true" : "false");
-  if (size > 0 && size < int(sizeof(message)))
-    server.sendBuffer(reinterpret_cast<const uint8_t*>(message), size);
-}
-
 void RobotDashboard_c::acknowledge(RobotWifiAP_c &server, const char* name, bool ok, const char* error) {
   // All strings passed here are fixed protocol vocabulary, never untrusted input.
   char message[192];
@@ -29,12 +19,7 @@ void RobotDashboard_c::command(Robot_c &robot, Controller_c &controller, RobotWi
     controller.stopFromDashboard(robot);
     active = true;
     last_ping_ms = robot.getMillis();
-    const auto* settings = controller.savedDriftSettings();
-    if (settings) {
-      sendWithSettings(server, "\"type\":\"hello\",\"protocol\":1,\"robot\":\"stamp-c3\"", *settings);
-    } else {
-      server.sendLine("{\"type\":\"hello\",\"protocol\":1,\"robot\":\"stamp-c3\"}");
-    }
+    server.sendLine("{\"type\":\"hello\",\"protocol\":1,\"robot\":\"stamp-c3\"}");
     return;
   }
   if (strcmp(line, "STOP") == 0) {
@@ -54,19 +39,6 @@ void RobotDashboard_c::command(Robot_c &robot, Controller_c &controller, RobotWi
   if (strcmp(line, "CALIBRATE") == 0) {
     const bool accepted = controller.calibrateFromDashboard();
     acknowledge(server, "CALIBRATE", accepted, accepted ? "" : "busy_or_stopping");
-    return;
-  }
-  if (strcmp(line, "SETTINGS") == 0 || strncmp(line, "SETTINGS ", 9) == 0) {
-    const char* flags = line + 8;
-    if (strlen(flags) != 4 || flags[2] != ' ' ||
-        (flags[1] != '0' && flags[1] != '1') || (flags[3] != '0' && flags[3] != '1')) {
-      acknowledge(server, "SETTINGS", false, "invalid_settings");
-    } else if (!controller.saveSettings({flags[1] == '1', flags[3] == '1'})) {
-      acknowledge(server, "SETTINGS", false, "settings_write_failed");
-    } else {
-      sendWithSettings(server, "\"type\":\"ack\",\"command\":\"SETTINGS\",\"ok\":true,\"error\":\"\"",
-                       *controller.savedDriftSettings());
-    }
     return;
   }
   if (strncmp(line, "START ", 6) == 0) {
