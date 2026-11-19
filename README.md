@@ -37,8 +37,9 @@ as a SHA-256-verified source archive, avoiding a large Git history download.
 ESP-IDF registers it as a local component and resolves its remaining dependencies
 through the component manager. Downloads are cached between builds; avoid deleting
 the build directory unless you need a clean configuration.
-`main/arduino_sketch.cpp` includes the existing `.ino` file without modifying
-it; Arduino autostart calls its `setup()` and `loop()` functions. All existing
+`main/main.ino` is compiled directly as C++, with its own entry in the compile
+database for IDE reference resolution; Arduino autostart calls its `setup()` and
+`loop()` functions. All existing
 `main/*.cpp` files are registered in `main/CMakeLists.txt`; add new source files
 there as the project grows. `DigitalTwin` is not part of this build.
 
