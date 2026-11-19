@@ -1,165 +1,117 @@
-# Straight-line drift notebook
+# Simulation and experiment engine
 
-Open **[StraightLineDrift.ipynb](StraightLineDrift.ipynb)** and select the local
-`experiments/.venv/bin/python` interpreter. Use Run All to watch the experiments
-in a live **Processing sketch window**, then generate pandas tables and
-matplotlib figures from the completed batches.
+Use the [React dashboard](../dashboard/README.md) to select simulation models,
+run batches, watch actual simulated samples and compare results. The previous
+Jupyter notebook and its interactive text menu have been removed. The dashboard
+uses these Python/Java modules directly; no notebook kernel is required.
 
-From the repository root, if the environment needs recreating:
+## Setup
+
+From the repository root:
 
 ```sh
 python3 -m venv experiments/.venv
 experiments/.venv/bin/python -m pip install -r experiments/requirements.txt
 ```
 
-Processing 4 must be installed. The notebook's `PROCESSING_RESOURCES` setting
-points at its bundled JDK and Java mode; the default matches this Mac's installed
-Processing. No physical robot or TCP connection is required. The Python runner
-compiles the actual PDE sketch once per session and opens the window automatically;
-you do not need to press Run in the Processing editor separately.
+Install Processing 4. The default resource directory is
+`/Applications/Processing.app/Contents/app/resources`; configure
+`PROCESSING_RESOURCES` for the dashboard when Processing is elsewhere. It must
+contain `jdk` and `modes/java`. Python library callers can pass the directory to
+`SimulationRunner` explicitly. The runner compiles the actual DigitalTwin PDE
+classes into a temporary directory before starting a selection.
 
-`LIVE_PROCESSING = True` in the setup cell enables real-time rendering. Each
-batch shows open-loop robot motion, model name, trial number, seed, elapsed
-time and centrepoint drift samples. Trials within each candidate advance automatically.
+## Models and measurements
 
-Run the separate **Choose what to run** cell to display a numbered text menu:
+Available models are `sterile`, `balanced_low`, `balanced_high`, `right_fast`
+and `left_fast`. `experiment_setup.py` holds the shared candidate definitions.
+The sterile baseline always runs once; noisy models use the selected trial count
+and successive deterministic seeds. Parallel execution runs candidates in
+separate Java processes. Trials within each candidate remain sequential.
 
-```text
-Simulation run menu
-  1. Run one candidate
-  2. Run all candidates sequentially
-  3. Run all candidates in parallel
-  0. Cancel
+All these batches use `MechanicalDriftExperiment`: constant equal PWM **45 / 45**
+for 30 seconds, starting from rest, with no calibration, compensation or steering.
+Rows identify `drive_mode=open_loop_equal_pwm` and `controller_mode=-1`.
+The standalone Processing sketch's line-following experiment is a separate
+protocol; its results should not be pooled with these mechanical drift trials.
+
+Samples are recorded at exactly 0–30 simulated seconds (31 rows per trial).
+Drift is measured from the axle/body centrepoint to the reference line using
+simulated world position, in millimetres: positive is left, negative is right.
+Encoder odometry is a separate estimate. Real-robot dashboard telemetry provides
+odometry, not measured ground-truth centrepoint drift.
+
+The noisy candidates illustrate motor lag, gain imbalance and independent
+wheel-speed disturbance; they are not calibrated claims about hardware. Sensor
+noise has no effect on these open-loop trials. Identical models and seeds produce
+identical samples in headless and live Processing modes. Rendering, streaming and
+pausing never change the fixed 10 ms physics step.
+
+## Python API
+
+```python
+from pathlib import Path
+from experiment_setup import default_candidates
+from simulation_runner import SimulationRunner
+
+root = Path(__file__).resolve().parents[1]
+with SimulationRunner(root) as simulation:
+    simulation.run_workbook(
+        root / "experiments/data/straight_line_results.xlsx",
+        default_candidates(), mode="all_parallel", runs=24, seed=2026,
+    )
 ```
 
-Type a number in the notebook's input prompt and press **Enter**. Option 1
-opens a second numbered menu for the candidate. Enter **0** or **q** at either
-prompt to cancel. Run All pauses for your answers, then continues to the
-simulation. The menu logic lives in `run_menu.py`, keeping it out of the core
-simulation cell. `N_RUNS` remains in the candidate-parameters cell; set it to 1
-for a quick preview.
+`mode` may be `single`, `all_sequential`, or `all_parallel`; `selected="right_fast"`
+selects a model in single mode. `run_candidates(directory, candidates, ...)`
+returns CSV paths instead of updating a workbook. `run(path, ...)` runs one model
+with explicit parameters. Existing CSVs are never overwritten by the low-level
+runner.
 
-The menu can be the **first cell run in a fresh kernel**. It loads missing
-imports, paths and default candidates from `experiment_setup.py`, preserving
-settings you have already changed. After choosing, run section 3 and the
-remaining analysis cells. Running setup and candidate parameters first remains
-useful when you want to customise the trial count or noise parameters.
+Set `live=True` on `SimulationRunner` to open actual Processing windows, one per
+active candidate. Space pauses/resumes the focused window; T tracks the robot;
++/- zoom; arrow keys pan. Closing an unfinished window fails the selection and
+stops the other unfinished processes. A 30-second live trial takes at least 30
+wall-clock seconds; headless mode computes the same samples as fast as possible.
 
-| Option | What runs |
-| --- | --- |
-| 1 — single | Only the chosen candidate, in one window |
-| 2 — sequential | Sterile, then each noisy candidate in turn |
-| 3 — parallel | Sterile and all four noisy candidates concurrently, in five windows |
+For monitoring, pass `progress_callback=callback`. It receives a dictionary for
+each actual recorded sample, including model/run IDs, time, world pose, PWM and
+encoder counts. Callbacks run serially on the calling thread, even for parallel
+batches. Pass a `threading.Event` as `cancel_event`; setting it stops compilation
+or running children and raises `SimulationCancelled` after they have been reaped.
+The optional Java property `-Ddashboard.stream=true` enables the underlying
+newline `DASHBOARD_SAMPLE {json}` protocol. Ordinary CSV callers need no streaming.
 
-Available selections: `sterile`, `balanced_low`, `balanced_high`, `right_fast`,
-and `left_fast`. Sterile always runs once. Parallelism is between candidates;
-the seeds within each candidate run sequentially. Windows are offset so their
-titles remain accessible; move them to arrange your view. Pause affects only
-the focused window.
+## Results and physical observations
 
-To change the selection, rerun the menu cell and section 3 onwards, or Run All.
-Every successful execution replaces the selected simulation sheets in the same Excel workbook. Plots, summaries,
-and physical scoring use only the models selected for that execution; a single
-model is evaluated without claiming it beats unexecuted candidates.
+`data/straight_line_results.xlsx` retains one sheet per model and `real_world`.
+Successful workbook writes replace selected model sheets atomically, preserve
+unselected models and physical observations, and rebuild the `comparison` sheet.
+Failed or cancelled batches leave prior results intact. Close Excel before
+writing results. The comparison sheet uses each trial's 30-second sample to
+calculate counts, signed/absolute mean drift, sample SD, RMS drift and forward
+travel. Unselected models can contain older data.
 
-- **Space** pauses/resumes the experiment.
-- **T** toggles camera tracking (enabled initially).
-- **+/-** zoom; **arrow keys** pan and disable tracking.
-- Closing an unfinished window cancels the selection and raises an error in the notebook.
-  The workbook is saved only after all selected batches finish; a failed or
-  cancelled selection leaves previous workbook data intact. Failures or notebook interruption also stop
-  every unfinished Java process, including parallel windows.
+For physical observations, enter `run_id`, `split`, `elapsed_s`, `centre_x_mm`,
+`centre_y_mm` under the existing `real_world` headers. Assign complete runs to
+`train` or `test` before fitting. The `analysis.py` library retains line-frame
+projection, observation validation and CRPS model scoring. Physical ground truth
+must come from measured positions; dashboard odometry is not substituted for it.
+Missing physical observations remain missing.
 
-The default 97 trials take roughly **49 minutes sequentially**, or **12 minutes in parallel** if the computer keeps up. Set
-`N_RUNS = 1` for a preview: about three minutes for all sequentially, or 30 seconds
-for a single candidate or all in parallel. Set `LIVE_PROCESSING = False` to run quickly without
-a window. Rendering uses the same fixed 10 ms physics steps and seed sequences
-as headless execution, so it does not change recorded results. Pausing or slow
-rendering can make wall-clock execution longer.
+## Verification
 
-Python callers can enable the same view with
-`SimulationRunner(ROOT, PROCESSING_RESOURCES, live=True)`; the runner's API
-defaults to headless mode for scripts and regression checks.
-
-The batch-selection API is `simulation.run_workbook(WORKBOOK, CANDIDATES,
-mode=RUN_MODE, selected=SELECTED_CANDIDATE, runs=N_RUNS, seed=BASE_SEED)`.
-
-The notebook runs one sterile trial and 24 seeded trials for each of four
-illustrative noisy candidates. Noise is implemented only by
-`SimulationBatch.java` in this folder. It does not modify the sterile
-`DigitalTwin` or the firmware. Motor lag, gain imbalance, wheel-speed noise and
-sensor noise are API parameters, not calibrated claims about hardware. Sensor
-noise is inactive in open-loop trials and defaults to zero.
-
-The notebook uses `MechanicalDriftExperiment`: constant equal PWM **45 / 45**
-for 30 seconds, starting from rest, with no calibration or feedback. It reuses
-DigitalTwin physics and recording but never invokes the line-following controller.
-Workbook rows include `drive_mode=open_loop_equal_pwm` and `controller_mode=-1`.
-The drawn line is only a reference for the initial heading. Physical trials must
-use the same equal-PWM protocol with steering and motor compensation disabled.
-Earlier line-following CSVs are not comparable and should not be pooled.
-
-Drift is measured from the **axle/body centrepoint** to the line centre.
-Positive = left; negative = right; units are millimetres. World pose provides
-simulated ground truth. Forward sensors and estimated odometry are not the
-centrepoint measurement.
-
-The persistent project is **`data/straight_line_results.xlsx`**, initially empty:
-
-- `sterile`, `balanced_low`, `balanced_high`, `right_fast`, `left_fast`: one row per
-  one-second sample, including run ID, seed, centre position, drift and parameters.
-- `real_world`: enter `run_id`, `split`, `elapsed_s`, `centre_x_mm`, `centre_y_mm`
-  from row 2. Keep the headers unchanged. Choose `train` or `test` for each run.
-
-The `comparison` sheet compares all stored candidates at 30 seconds using Excel
-formulas: number of trials, mean signed and absolute drift, sample standard
-deviation, RMS drift, and mean forward travel. Missing results stay blank; SD
-requires at least two trials. Its formulas are rebuilt after each successful
-simulation write and recalculate on opening Excel (and when source values change).
-Only 30-second rows contribute, so each completed trial has equal weight.
-Unselected candidates can contain older results. Lower absolute/RMS drift means
-straighter travel, not necessarily a better model of the physical robot.
-
-Close Excel before running a batch. Successful runs replace all rows in the selected
-candidate sheets, including removal of excess rows from longer prior batches.
-Unselected candidates and the entire `real_world` sheet are preserved. Parallel
-simulations use separate temporary CSVs internally; the parent process commits
-Excel once, atomically, after success. Temporary CSVs are removed afterwards.
-The low-level CSV runner remains available for simulation regression checks.
-
-The notebook reads back the selected Excel sheets for analysis. Summaries, fit
-scores and residuals are displayed in the notebook; plots and the current
-selection's `manifest.json` overwrite files in `results/latest/`. That manifest
-covers the most recent selection, not older unselected sheets. Seeds and model
-parameters are retained on every simulation row. Archive the workbook and latest
-figures together if a run needs to be retained before the next overwrite.
-
-To fit against hardware, enter measured centrepoint coordinates in `real_world`.
-Assign entire runs to `train` or `test` before fitting. The notebook explains
-line-frame projection, sample alignment, CRPS selection, held-out evaluation,
-and the limits of a finite candidate search. Missing physical data are never
-replaced with synthetic observations. The default fitting times are 3–30 s;
-change `FIT_TIMES` if your measurements cover fewer seconds.
-
-Regression checks (synthetic fixtures are only tests):
+From the repository root:
 
 ```sh
+cd experiments
 .venv/bin/python -m unittest test_experiment test_workbook_results
 ```
 
-To also check real-time pacing and identical live/headless CSVs across two
-trials (opens a window and takes about 60 seconds):
+These checks cover deterministic simulations, streamed samples against CSVs,
+parallel failure/cancellation cleanup, analysis and workbook preservation.
+To also compare live and headless CSVs over two trials (opens a window, ~60 s):
 
 ```sh
 TEST_LIVE_PROCESSING=1 .venv/bin/python -m unittest test_experiment test_workbook_results
-```
-
-For unattended terminal execution, set `INTERACTIVE_SELECTION = False` in the
-menu cell and choose `RUN_MODE, SELECTED_CANDIDATE` in its `else` branch (for
-example, `"single", "right_fast"` or `"all_parallel", None`). Also set
-`LIVE_PROCESSING = False` for fast execution. Then re-execute and save:
-
-```sh
-.venv/bin/python -m jupyter nbconvert --execute --to notebook \
-  --inplace StraightLineDrift.ipynb --ExecutePreprocessor.timeout=-1
 ```

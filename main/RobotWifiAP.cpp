@@ -1,4 +1,5 @@
 #include "RobotWifiAP.h"
+#include <lwip/sockets.h>
 
 RobotWifiAP_c::RobotWifiAP_c(const char* ssid, const char* password, uint16_t port)
   : _ssid(ssid), _password(password), _port(port), _server(port) {
@@ -32,6 +33,7 @@ void RobotWifiAP_c::update() {
     WiFiClient newClient = _server.accept();
     if (newClient) {
       _client = newClient;
+      ++_clientGeneration;
       _client.setNoDelay(true);
     }
   }
@@ -86,9 +88,10 @@ bool RobotWifiAP_c::sendLine(const char* msg) {
     return false;
   }
 
-  size_t written = _client.print(msg);
-  written += _client.print("\n");
-  return written > 0;
+  // Use the bounded sender for both segments; a failed segment retires the
+  // connection instead of leaving a truncated protocol record in the stream.
+  return sendBuffer(reinterpret_cast<const uint8_t*>(msg), strlen(msg))
+      && sendBuffer(reinterpret_cast<const uint8_t*>("\n"), 1);
 }
 
 bool RobotWifiAP_c::sendBuffer(const uint8_t* data, size_t len) {
@@ -96,8 +99,15 @@ bool RobotWifiAP_c::sendBuffer(const uint8_t* data, size_t len) {
     return false;
   }
 
-  size_t written = _client.write(data, len);
-  return written == len;
+  // Arduino NetworkClient::write can retry blocked writes for seconds. One
+  // nonblocking socket send keeps the motor watchdog responsive even when a
+  // client stops reading. A partial frame requires a fresh connection.
+  const int written = ::send(_client.fd(), data, len, MSG_DONTWAIT);
+  if (written != static_cast<int>(len)) {
+    _client.stop();
+    return false;
+  }
+  return true;
 }
 
 void RobotWifiAP_c::disconnectClient() {
@@ -148,12 +158,13 @@ bool RobotWifiAP_c::printlnf(const char* format, ...) {
   char buffer[256];
   va_list args;
   va_start(args, format);
-  int len = vsnprintf(buffer, sizeof(buffer) - 2, format, args);
+  int len = vsnprintf(buffer, sizeof(buffer) - 1, format, args);
   va_end(args);
 
   if (len <= 0) {
     return false;
   }
+  // Leave room for the newline and the final terminator on truncated output.
   if (len > (int)(sizeof(buffer) - 2)) {
     len = sizeof(buffer) - 2;
   }

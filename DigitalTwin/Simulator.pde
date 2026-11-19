@@ -34,7 +34,7 @@ class Simulator {
   int surfaceCacheHeight = 0;
   PApplet applet;
   /** @brief Robot-only Digital Twin model; the surface image is its environment. */
-  Robot_c robot;
+  RobotSimulation_c robot;
   Controller_c controller;
   TimeSeriesGraph motorGraph;
   TimeSeriesGraph sensorGraph;
@@ -84,7 +84,7 @@ class Simulator {
     ellipseMode(RADIUS);
     strokeJoin(ROUND);
     surfaceImage = loadSurfaceImage();
-    robot = new Robot_c(16.0, 90.00, surfaceImage,
+    robot = new RobotSimulation_c(16.0, 90.00, surfaceImage,
       surfaceOffsetX, surfaceOffsetY);
     controller = new Controller_c();
     restartExperiment();

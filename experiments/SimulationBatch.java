@@ -101,7 +101,8 @@ public class SimulationBatch {
     final int runs;
     final long seed;
     final float imbalance, tau, wheelNoise, sensorNoise;
-    int run = 0, steps = 0;
+    int run = 0, steps = 0, streamedSamples = 0;
+    final boolean dashboardStream = Boolean.getBoolean("dashboard.stream");
     boolean complete = false;
     DigitalTwin.StraightLineExperiment experiment;
     DigitalTwin.Controller_c controller;
@@ -123,6 +124,7 @@ public class SimulationBatch {
 
     void startTrial() {
       steps = 0;
+      streamedSamples = 0;
       experiment = new MechanicalDriftExperiment(app);
       controller = app.new Controller_c();
       robot = model.equals("sterile")
@@ -134,6 +136,7 @@ public class SimulationBatch {
     void step() {
       if (complete) return;
       experiment.step(robot, controller, 10);
+      streamSamples();
       steps++;
       if (!experiment.complete) {
         if (steps >= 6000) throw new IllegalStateException("Trial exceeded 60 s limit");
@@ -149,6 +152,25 @@ public class SimulationBatch {
       } else {
         run++;
         startTrial();
+      }
+    }
+
+    /** Emit recorded samples only; observation never advances or changes physics. */
+    void streamSamples() {
+      if (!dashboardStream) return;
+      while (streamedSamples < experiment.samples.getRowCount()) {
+        TableRow sample = experiment.samples.getRow(streamedSamples++);
+        // Model IDs are restricted to ASCII letters/digits/_/- by the Python runner.
+        // Numeric table strings preserve the same precision used in exported CSVs.
+        StringBuilder json = new StringBuilder("{\"model_id\":\"").append(model)
+          .append("\",\"run_id\":\"").append(model).append("-")
+          .append(String.format("%03d", run)).append("\"");
+        for (String column : new String[]{"elapsed_s", "forward_mm", "signed_drift_mm",
+             "heading_rad", "left_pwm", "right_pwm", "left_count", "right_count"}) {
+          json.append(",\"").append(column).append("\":").append(sample.getString(column));
+        }
+        System.out.println("DASHBOARD_SAMPLE " + json.append("}"));
+        System.out.flush();
       }
     }
 
