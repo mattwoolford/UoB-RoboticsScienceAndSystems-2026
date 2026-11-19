@@ -1,10 +1,14 @@
 """Compile DigitalTwin once and run live or headless experiment batches."""
+from collections import deque
 from contextlib import AbstractContextManager
+import json
 import math
 import os
 from pathlib import Path
+import queue
 import subprocess
 import tempfile
+import threading
 import time
 
 DEFAULT_PROCESSING = Path('/Applications/Processing.app/Contents/app/resources')
@@ -29,20 +33,113 @@ def select_candidates(candidates, mode='all_sequential', selected='balanced_low'
     return models
 
 
+class SimulationCancelled(RuntimeError):
+    """Raised after all child processes have stopped on explicit cancellation."""
+
+
 class SimulationRunner(AbstractContextManager):
-    def __init__(self, root, processing_resources=DEFAULT_PROCESSING, *, live=False):
+    def __init__(self, root, processing_resources=DEFAULT_PROCESSING, *, live=False,
+                 progress_callback=None, cancel_event=None):
+        """Stream actual samples to a callback and honour an optional threading.Event.
+
+        Callbacks run serially on the caller's thread, including parallel batches.
+        The event can cancel compilation as well as headless/live simulation.
+        """
         self.root = Path(root).resolve()
         self.resources = Path(processing_resources).resolve()
         self.temporary = None
         self.live = live
+        self.progress_callback = progress_callback
+        self.cancel_event = cancel_event
+
+    def _check_cancelled(self):
+        """Reject further launches and stop active children once cancellation is set."""
+        if self.cancel_event is not None and self.cancel_event.is_set():
+            raise SimulationCancelled('Simulation cancelled.')
+
+    @staticmethod
+    def _read_output(stream, lines):
+        """Drain pipes continuously so a verbose Java child cannot deadlock."""
+        try:
+            for line in stream:
+                lines.put(line)
+        finally:
+            lines.put(None)
+
+    def _execute(self, commands):
+        """Supervise commands together, cleaning up all children on any failure.
+
+        Each tuple contains arguments, timeout seconds (or None), and an optional
+        expected CSV path. Reader threads only drain pipes; callbacks and errors
+        are handled here so they share the same cancellation/cleanup boundary.
+        """
+        jobs = []
+        try:
+            for arguments, timeout, output in commands:
+                self._check_cancelled()
+                process = subprocess.Popen([str(a) for a in arguments], cwd=self.root,
+                                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                           text=True, encoding='utf-8', errors='replace')
+                lines = queue.Queue()
+                reader = threading.Thread(target=self._read_output,
+                                          args=(process.stdout, lines), daemon=True)
+                job = dict(process=process, lines=lines, reader=reader,
+                           log=deque(maxlen=500), eof=False, done=False,
+                           started=time.monotonic(), timeout=timeout, output=output)
+                jobs.append(job)
+                reader.start()
+            while any(not job['done'] for job in jobs):
+                self._check_cancelled()
+                for job in jobs:
+                    if job['done']:
+                        continue
+                    # A bounded drain keeps cancellation responsive during large batches.
+                    for _ in range(4096):
+                        try:
+                            line = job['lines'].get_nowait()
+                        except queue.Empty:
+                            break
+                        if line is None:
+                            job['eof'] = True
+                            break
+                        if line.startswith('DASHBOARD_SAMPLE '):
+                            if self.progress_callback is not None:
+                                self.progress_callback(json.loads(line[len('DASHBOARD_SAMPLE '):]))
+                        else:
+                            job['log'].append(line)
+                    code = job['process'].poll()
+                    if code is not None and job['eof']:
+                        if code:
+                            raise RuntimeError(f"Simulation command failed (exit {code}):\n"
+                                               + ''.join(job['log']))
+                        if job['output'] is not None:
+                            self._check_output(job['output'])
+                        job['done'] = True
+                    elif job['timeout'] is not None and time.monotonic() - job['started'] > job['timeout']:
+                        raise TimeoutError('Simulation command timed out.')
+                if any(not job['done'] for job in jobs):
+                    time.sleep(.02)
+            self._check_cancelled()
+            return [''.join(job['log']).strip() for job in jobs]
+        finally:
+            # Cancel every unfinished child first; then reap them and close pipes.
+            for job in jobs:
+                if job['process'].poll() is None:
+                    job['process'].terminate()
+            for job in jobs:
+                process = job['process']
+                try:
+                    process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+                if job['reader'].ident is not None:
+                    job['reader'].join(timeout=2)
+                process.stdout.close()
 
     def _command(self, arguments, *, timeout=180):
-        result = subprocess.run([str(a) for a in arguments], cwd=self.root,
-                                text=True, capture_output=True, timeout=timeout)
-        if result.returncode:
-            raise RuntimeError(f"Simulation command failed (exit {result.returncode}):\n"
-                               f"{result.stdout}\n{result.stderr}")
-        return result.stdout.strip()
+        """Use the same cancellable supervision for compilation and single jobs."""
+        return self._execute([(arguments, timeout, None)])[0]
 
     def __enter__(self):
         self.java = self.resources / 'jdk/bin/java'
@@ -62,7 +159,7 @@ class SimulationRunner(AbstractContextManager):
             self.classpath = os.pathsep.join(map(str, (build, mode / '*', net)))
             self._command([javac, '-cp', self.classpath, '-d', build,
                            self.root / 'experiments/SimulationBatch.java'])
-        except Exception:
+        except BaseException:
             self.temporary.cleanup()
             raise
         return self
@@ -91,13 +188,18 @@ class SimulationRunner(AbstractContextManager):
             raise ValueError('seed must fit in a nonnegative Java long, including run offsets.')
         if abs(gain_imbalance) >= 2 or min(values[1:]) < 0:
             raise ValueError('Both gains must be positive; time constant/noise must be nonnegative.')
-        if not model_id or model_id == 'sterile' and any(values):
+        if not isinstance(model_id, str) or not model_id or any(
+                char not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-'
+                for char in model_id):
+            raise ValueError('Model IDs must contain letters, digits, underscores or hyphens.')
+        if model_id == 'sterile' and any(values):
             raise ValueError('The sterile model cannot have noise, lag or imbalance.')
         output = Path(output).resolve()
         if output.exists():
             raise FileExistsError(f'Refusing to replace existing results: {output}')
         output.parent.mkdir(parents=True, exist_ok=True)
         command = [self.java, f'-Djava.awt.headless={str(not self.live).lower()}',
+                   f'-Ddashboard.stream={str(self.progress_callback is not None).lower()}',
                    '-cp', self.classpath, 'SimulationBatch', output, model_id, runs, seed,
                    *values, *(['--live'] if self.live else [])]
         return output, command
@@ -117,7 +219,7 @@ class SimulationRunner(AbstractContextManager):
                        selected='balanced_low', runs=24, seed=2026):
         """Run one model or all models; parallelism is between candidates, not seeds.
 
-        A failure, closed window or notebook interrupt stops unfinished processes.
+        A failure, closed window or cancellation stops unfinished processes.
         Completed CSVs remain available; results are returned in candidate order.
         """
         models = select_candidates(candidates, mode, selected)
@@ -135,49 +237,14 @@ class SimulationRunner(AbstractContextManager):
                 self._check_output(output)
                 print(message, flush=True)
         else:
-            processes, logs = [], []
-            try:
-                for index, (model, count, output, command) in enumerate(jobs):
-                    self._announce(model['model_id'], count)
-                    if self.live:
-                        command = [command[0], f'-Ddrift.window.index={index}', *command[1:]]
-                    # File-backed logs avoid blocking on a full pipe while other jobs run.
-                    log = tempfile.TemporaryFile(mode='w+')
-                    logs.append(log)
-                    process = subprocess.Popen([str(a) for a in command], cwd=self.root,
-                                               stdout=log, stderr=subprocess.STDOUT, text=True)
-                    processes.append((process, log, output, time.monotonic()))
-                pending = list(processes)
-                while pending:
-                    for job in pending[:]:
-                        process, log, output, started = job
-                        code = process.poll()
-                        if code is None:
-                            if not self.live and time.monotonic() - started > 180:
-                                raise TimeoutError(f'Simulation timed out: {output.stem}')
-                            continue
-                        log.seek(0)
-                        message = log.read().strip()
-                        if code:
-                            raise RuntimeError(f'Simulation {output.stem} failed (exit {code}):\n{message}')
-                        self._check_output(output)
-                        print(message, flush=True)
-                        pending.remove(job)
-                    if pending:
-                        time.sleep(.05)
-            finally:
-                # This also runs on KeyboardInterrupt and launch/CSV failures.
-                for process, _, _, _ in processes:
-                    if process.poll() is None:
-                        process.terminate()
-                for process, _, _, _ in processes:
-                    try:
-                        process.wait(timeout=2)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
-                        process.wait()
-                for log in logs:
-                    log.close()
+            commands = []
+            for index, (model, count, output, command) in enumerate(jobs):
+                self._announce(model['model_id'], count)
+                if self.live:
+                    command = [command[0], f'-Ddrift.window.index={index}', *command[1:]]
+                commands.append((command, None if self.live else 180, output))
+            for message in self._execute(commands):
+                print(message, flush=True)
         return [output for _, _, output, _ in jobs]
 
     def run_workbook(self, workbook, candidates, *, mode='all_sequential',
@@ -195,6 +262,7 @@ class SimulationRunner(AbstractContextManager):
             paths = self.run_candidates(directory, candidates, mode=mode,
                                         selected=selected, runs=runs, seed=seed)
             frames = {path.stem: pd.read_csv(path, dtype={'seed': str}) for path in paths}
+            self._check_cancelled()
             write_simulations(workbook, frames)
         return list(frames)
 

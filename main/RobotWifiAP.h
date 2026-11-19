@@ -39,6 +39,9 @@ class RobotWifiAP_c {
     /** @brief Returns whether a TCP client is currently connected. */
     bool clientConnected();
 
+    /** @brief Changes on every accepted socket so protocol leases cannot transfer. */
+    uint32_t clientGeneration() const { return _clientGeneration; }
+
     /**
        @brief Returns the number of bytes waiting to be read from the client.
        @return Zero when no client is connected or no bytes are available.
@@ -78,7 +81,9 @@ class RobotWifiAP_c {
        @brief Sends a binary buffer unchanged.
        @param data Bytes to send.
        @param len Number of bytes to send.
-       @return true only when every byte was written.
+       @return true only when every byte was written without waiting.
+       @note Backpressure or a partial send closes the client to preserve framing
+       and allow the remote motor lease to stop promptly.
     */
     bool sendBuffer(const uint8_t* data, size_t len);
 
@@ -110,10 +115,8 @@ class RobotWifiAP_c {
        @brief Formats and sends one newline-terminated string to the active client.
        @param format printf-style format string.
        @return true when the prepared buffer bytes, including newline, were written.
-       @warning Keep the formatted payload to at most 253 bytes before newline.
-       The current implementation mishandles longer output: it can send an
-       embedded null byte and, above 254 payload bytes, an uninitialised byte.
-       A true result does not detect truncation or these formatting errors.
+       @warning Payloads longer than 254 bytes are truncated before the newline.
+       A true result confirms transmission of the retained bytes only.
     */
     bool printlnf(const char* format, ...);
 
@@ -127,6 +130,7 @@ class RobotWifiAP_c {
     WiFiServer _server;
     WiFiClient _client;
     bool _started = false;
+    uint32_t _clientGeneration = 0;
     unsigned long _lastAcceptCheckMs = 0;
     unsigned long _acceptIntervalMs = 100;
 };

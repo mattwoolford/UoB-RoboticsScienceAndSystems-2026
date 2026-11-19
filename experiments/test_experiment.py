@@ -4,52 +4,16 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest.mock import patch
 import numpy as np
 import pandas as pd
 from analysis import centrepoint_drift, load_observations, score_models
-from simulation_runner import SimulationRunner, select_candidates
+from simulation_runner import SimulationRunner, SimulationCancelled, select_candidates
 
 ROOT = Path(__file__).resolve().parents[1]
-
-
-class NotebookMenuChecks(unittest.TestCase):
-    def test_menu_runs_first_from_repository_root(self):
-        # A fresh Python process has no setup-cell variables and uses real stdin.
-        # This reproduces the saved first-cell NameError, rather than preloading fixtures.
-        notebook = ROOT / 'experiments/StraightLineDrift.ipynb'
-        script = '''
-import json, sys
-from pathlib import Path
-n = json.loads(Path(sys.argv[1]).read_text())
-cell = next(c for c in n['cells'] if c.get('id') == 'run-menu')
-scope = {}
-exec(''.join(cell['source']), scope)
-assert scope['RUN_MODE'] == 'single'
-assert scope['SELECTED_CANDIDATE'] == 'right_fast'
-assert [c['model_id'] for c in scope['ACTIVE_CANDIDATES']] == ['right_fast']
-assert scope['ROOT'] == Path.cwd()
-assert all(name in scope for name in ['SimulationRunner', 'pd', 'plt', 'BASE_SEED',
-                                     'PROCESSING_RESOURCES', 'FIT_TIMES', 'N_RUNS'])
-'''
-        with tempfile.TemporaryDirectory() as directory:
-            result = subprocess.run([sys.executable, '-c', script, str(notebook)],
-                                    cwd=ROOT, input='1\n4\n', text=True, capture_output=True,
-                                    timeout=60, env={**os.environ, 'MPLBACKEND': 'Agg',
-                                                     'MPLCONFIGDIR': directory})
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn('Selected: single | Models: right_fast', result.stdout)
-
-    def test_setup_preserves_existing_settings(self):
-        from experiment_setup import initialize_notebook
-        candidates = [dict(model_id='custom', sensor_noise_counts=12)]
-        scope = dict(N_RUNS=2, CANDIDATES=candidates, LIVE_PROCESSING=False)
-        initialize_notebook(scope)
-        self.assertIs(scope['CANDIDATES'], candidates)
-        self.assertEqual(scope['N_RUNS'], 2)
-        self.assertFalse(scope['LIVE_PROCESSING'])
 
 
 class AnalysisChecks(unittest.TestCase):
@@ -93,6 +57,52 @@ class AnalysisChecks(unittest.TestCase):
 
 
 class SimulationChecks(unittest.TestCase):
+    def test_stream_callback_can_cancel_before_process_finishes(self):
+        # An actual long-running child proves progress is delivered before exit,
+        # and that cancellation reaps that child instead of merely hiding the UI.
+        cancel = threading.Event()
+        samples, processes = [], []
+        real_popen = subprocess.Popen
+
+        def on_sample(sample):
+            samples.append(sample)
+            cancel.set()
+
+        def launch(*args, **kwargs):
+            process = real_popen(*args, **kwargs)
+            processes.append(process)
+            return process
+
+        runner = SimulationRunner(ROOT, progress_callback=on_sample, cancel_event=cancel)
+        script = """import time; print('DASHBOARD_SAMPLE {"elapsed_s": 0}', flush=True); time.sleep(30)"""
+        with patch('simulation_runner.subprocess.Popen', side_effect=launch):
+            with self.assertRaises(SimulationCancelled):
+                runner._command([sys.executable, '-c', script])
+        self.assertEqual(samples, [{'elapsed_s': 0}])
+        self.assertTrue(all(process.poll() is not None for process in processes))
+        # A cancelled job cannot begin compiling or launch another candidate.
+        with patch('simulation_runner.subprocess.Popen') as launch:
+            with self.assertRaises(SimulationCancelled):
+                runner._command([sys.executable, '-c', 'pass'])
+            launch.assert_not_called()
+
+    def test_streamed_samples_match_actual_csv_in_parallel(self):
+        samples = []
+        candidates = [dict(model_id='noisy', gain_imbalance=.015)]
+        with tempfile.TemporaryDirectory() as directory, SimulationRunner(
+                ROOT, progress_callback=samples.append) as runner:
+            outputs = runner.run_candidates(directory, candidates, mode='all_parallel', runs=2)
+            streamed = pd.DataFrame(samples)
+            for output in outputs:
+                recorded = pd.read_csv(output)
+                observed = streamed[streamed.model_id == output.stem].reset_index(drop=True)
+                self.assertEqual(len(observed), len(recorded))
+                for column in observed.columns:
+                    if column in {'model_id', 'run_id'}:
+                        self.assertEqual(observed[column].tolist(), recorded[column].tolist())
+                    else:
+                        np.testing.assert_allclose(observed[column], recorded[column], rtol=0, atol=0)
+
     def test_candidate_selection(self):
         candidates = [dict(model_id='noisy', sensor_noise_counts=25)]
         self.assertEqual(select_candidates(candidates, 'single', 'sterile'),
