@@ -23,6 +23,11 @@ class Controller_c {
      */
     OdometryModel_c odometry;
 
+    /** Keep track of the number of times the function is called */
+    unsigned long call_count;
+    /** @brief The motor PWM current setting */
+    unsigned long motor_pwm;
+
     /** @brief Fastest interval between controller and I2C acquisition cycles. */
     static const unsigned long UPDATE_INTERVAL_MS = 10;
     /** @brief Interval between telemetry records in milliseconds. */
@@ -89,30 +94,10 @@ class Controller_c {
     Mode mode;
     TaskTimer_c update_timer;
     TaskTimer_c telemetry_timer;
-    /** @brief Keep track of the number of times the function is called */
-    unsigned long call_count;
-    /** @brief The left motor PWM current setting */
-    float left_motor_pwm;
-    /** @brief The right motor PWM current setting */
-    float right_motor_pwm;
-    /** Keep track of the last time a speed measurement was taken */
-    unsigned long last_speed_measurement_ms;
-    /** Log the last wheel speed encoder count (left wheel) */
-    int32_t last_left_wheel_encoder_count;
-    /** Log the last wheel speed encoder count (right wheel) */
-    int32_t last_right_wheel_encoder_count;
-    /** Log the wheel speed (left wheel) */
-    float left_wheel_speed;
-    /** Log the wheel speed (right wheel) */
-    float right_wheel_speed;
     unsigned long recovery_start_ms;
-
 
     /** @brief Returns whether cached DN3 is at or above LINE_THRESHOLD. */
     bool lineDetected(const Robot_c &robot) const;
-
-    /** @brief Measures wheel speed. */
-    void monitorWheelSpeed(Robot_c &robot, unsigned long now, float sampling_rate_hz = 10.0);
 
     /** @brief Runs a start/stop test for the motors. */
     void motorStartStopTest(Robot_c &robot, unsigned long now);
@@ -122,9 +107,6 @@ class Controller_c {
 
     /** @brief Applies the nominal controller behaviour for the current mode. */
     void runLineFollower(Robot_c &robot, unsigned long now);
-
-    /** @brief Wrapper for robot.setMotorPWM */
-    void setMotorPWM(Robot_c &robot, float left_pwm, float right_pwm);
 
     /**
      * @brief Sends the current controller and robot snapshot as one CSV record.
