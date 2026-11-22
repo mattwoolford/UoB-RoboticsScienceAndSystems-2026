@@ -114,6 +114,9 @@ trials, inspect live trajectories and drift, download CSV/Excel results, and
 connect to the real robot over WiFi. The app uses Vite, React and TypeScript with
 a local Python simulation/TCP bridge. It replaces the Jupyter notebook setup.
 
+After installing the dashboard dependencies, run `pnpm dev` from the repository
+root to start the Python backend and the dashboard together.
+
 The robot now boots stopped and supports explicit calibration, bounded test runs,
 telemetry and connection-loss stopping. See the dashboard guide for installation,
 WiFi credentials, firmware behaviour, and verification commands.

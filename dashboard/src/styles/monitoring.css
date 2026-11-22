@@ -270,33 +270,68 @@
 .results-panel h2 {
   font-size: 18px;
 }
+.results-panel h3 {
+  margin: 0;
+  font-size: 15px;
+}
+.workbook-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.workbook-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-top: 1px solid var(--border);
+  padding: 14px 23px;
+}
+.workbook-info {
+  min-width: 0;
+  font-size: 13px;
+}
+.workbook-info time {
+  display: inline-block;
+  margin-inline-end: 12px;
+  color: var(--muted);
+}
+.workbook-info strong {
+  margin-inline-end: 12px;
+}
+.workbook-info span {
+  display: block;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+}
+.workbook-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+}
+.workbook-info p {
+  margin-top: 6px;
+}
+.workbook-list .button {
+  flex-shrink: 0;
+}
 .export-actions {
   display: flex;
   gap: 9px;
 }
-.export-actions .button {
+.export-actions .button,
+.workbook-list .button {
   font-size: 12px;
   padding: 7px 12px;
   min-height: 35px;
 }
 .results-empty {
   border-top: 1px solid #edf1f4;
-  display: flex;
-  align-items: center;
-  gap: 16px;
   padding: 29px 24px;
-  color: #97aab4;
-  background: #fcfdfd;
-}
-.results-empty strong {
+  color: var(--muted);
   font-size: 13px;
-  font-weight: 550;
-  color: #617c8d;
-}
-.results-empty p {
-  font-size: 12px;
-  margin-top: 4px;
-  color: #8d9daa;
+  background: #fcfdfd;
 }
 .results-note {
   padding: 12px 24px;

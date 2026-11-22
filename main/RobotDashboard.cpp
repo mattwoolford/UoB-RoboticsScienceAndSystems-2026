@@ -31,9 +31,9 @@ void RobotDashboard_c::command(Robot_c &robot, Controller_c &controller, RobotWi
     last_ping_ms = robot.getMillis();
     const auto* settings = controller.savedDriftSettings();
     if (settings) {
-      sendWithSettings(server, "\"type\":\"hello\",\"protocol\":1,\"robot\":\"stamp-c3\"", *settings);
+      sendWithSettings(server, "\"type\":\"hello\",\"protocol\":1,\"robot\":\"stamp-c3\",\"pwm_sweep\":true", *settings);
     } else {
-      server.sendLine("{\"type\":\"hello\",\"protocol\":1,\"robot\":\"stamp-c3\"}");
+      server.sendLine("{\"type\":\"hello\",\"protocol\":1,\"robot\":\"stamp-c3\",\"pwm_sweep\":true}");
     }
     return;
   }
@@ -121,6 +121,22 @@ void RobotDashboard_c::update(Robot_c &robot, Controller_c &controller, RobotWif
     length = 0;
     discarding = false;
     return;
+  }
+  Controller_c::PwmSample sample;
+  if (active && controller.takePwmSample(sample)) {
+    char message[256];
+    const int size = snprintf(message, sizeof(message),
+        "{\"type\":\"pwm_sample\",\"run\":%u,\"pwm\":%d,\"elapsed_ms\":%lu,"
+        "\"left_delta\":%ld,\"right_delta\":%ld,\"left_rad_s\":%.7f,\"right_rad_s\":%.7f}\n",
+        sample.run, sample.pwm, sample.elapsed_ms, long(sample.left_delta), long(sample.right_delta),
+        sample.left_rad_s, sample.right_rad_s);
+    if (size <= 0 || size >= int(sizeof(message)) ||
+        !server.sendBuffer(reinterpret_cast<const uint8_t*>(message), size)) {
+      controller.stopFromDashboard(robot);
+      server.disconnectClient();
+      return;
+    }
+    if (sample.final) server.sendLine("{\"type\":\"pwm_sweep_done\"}");
   }
   for (size_t consumed = 0; consumed < 128 && server.available(); ++consumed) {
     const int value = server.read();

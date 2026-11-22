@@ -55,15 +55,15 @@ class OdometryModel_c {
      */
     bool update(int32_t leftCount, int32_t rightCount);
 
-  private:
-    bool initialised;
-    int32_t previousLeftCount;
-    int32_t previousRightCount;
-
     /** @brief Handles signed 32-bit counter wrap without signed overflow.
      * @note Assumes fewer than 2^31 counts of travel between observations.
      */
     static int64_t countChange(int32_t current, int32_t previous);
+
+  private:
+    bool initialised;
+    int32_t previousLeftCount;
+    int32_t previousRightCount;
 };
 
 #endif

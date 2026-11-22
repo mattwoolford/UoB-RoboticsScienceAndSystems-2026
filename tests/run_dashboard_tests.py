@@ -76,6 +76,7 @@ struct RobotWifiAP_c {
     (work / "test.cpp").write_text(r'''
 #include "RobotDashboard.h"
 #include <cassert>
+#include <cstdio>
 #include <cstring>
 #include <iostream>
 extern bool fail_settings_write;
@@ -84,12 +85,13 @@ int main() {
   Robot_c robot;
   RobotWifiAP_c server;
   RobotDashboard_c dashboard;
+  int right_ticks = 1;
   controller.enableDashboardControl(robot);
   assert(controller.loadSettings());
   auto tick = [&] {
     clock_ms += 10;
     if (robot.left > 0) ++robot.left_count;
-    if (robot.right > 0) ++robot.right_count;
+    if (robot.right > 0) robot.right_count += right_ticks;
     dashboard.update(robot, controller, server);
     controller.update(robot, server);
   };
@@ -120,6 +122,77 @@ int main() {
   assert(command("SETTINGS 1 1").find("settings_write_failed") != std::string::npos);
   assert(command("HELLO").find("\"drift_correction\":false,\"drift_path_recovery\":true") != std::string::npos);
   fail_settings_write = false;
+  // Sweep operates before calibration. Test both boundaries of the run count,
+  // independent signed wheel rates, actual elapsed time, and the final stop.
+  for (const char* invalid : {"", " 0", " 101", " -1", " 1.5", " 2x"}) {
+    assert(command(std::string("START pwm_sweep") + invalid).find("\"ok\":false") != std::string::npos);
+  }
+  assert(command("START pwm_sweep 100").find("\"ok\":true") != std::string::npos);
+  command("STOP");
+  command("SETTINGS 1 1");
+  assert(command("START pwm_sweep 2").find("\"ok\":true") != std::string::npos);
+  assert(command("START motor_test").find("\"ok\":false") != std::string::npos);
+  right_ticks = -2;
+  for (int run = 1; run <= 2; ++run) {
+    // Include rundown during settling and confirm the zero-PWM sample excludes
+    // it. The rejected start above took one 10 ms tick in run 1.
+    const auto settling_start = server.output.size();
+    for (int i = (run == 1 ? 1 : 0); i < 200; ++i) {
+      if (i % 50 == 0) server.input += "PING\n";
+      ++robot.left_count;
+      --robot.right_count;
+      tick();
+    }
+    dashboard.update(robot, controller, server);
+    assert(server.output.substr(settling_start).find("pwm_sample") == std::string::npos);
+    for (int pwm = 0; pwm <= 300; pwm += 5) {
+      assert(robot.left == pwm && robot.right == pwm);
+      for (int step = 0; step < 200; ++step) {
+        if (step % 50 == 0) server.input += "PING\n";
+        if (run == 2 && pwm == 5 && step == 199) clock_ms += 7;
+        tick();
+      }
+      const auto offset = server.output.size();
+      dashboard.update(robot, controller, server);
+      auto packet = server.output.substr(offset);
+      int recorded_run, recorded_pwm, elapsed, left, right;
+      double left_speed, right_speed;
+      assert(std::sscanf(packet.c_str(),
+          "{\"type\":\"pwm_sample\",\"run\":%d,\"pwm\":%d,\"elapsed_ms\":%d,"
+          "\"left_delta\":%d,\"right_delta\":%d,\"left_rad_s\":%lf,\"right_rad_s\":%lf}",
+          &recorded_run, &recorded_pwm, &elapsed, &left, &right, &left_speed, &right_speed) == 7);
+      assert(recorded_run == run && recorded_pwm == pwm);
+      assert(elapsed == (run == 2 && pwm == 5 ? 2007 : 2000));
+      assert(left == (pwm == 0 ? 0 : 200) && right == left * right_ticks);
+      const double factor = 2 * M_PI * 1000 / (358.3 * elapsed);
+      assert(std::abs(left_speed - left * factor) < 1e-5);
+      assert(std::abs(right_speed - right * factor) < 1e-5);
+      const bool done = packet.find("{\"type\":\"pwm_sweep_done\"}") != std::string::npos;
+      assert(done == (run == 2 && pwm == 300));
+    }
+  }
+  assert(!controller.dashboardBusy() && robot.left == 0 && robot.right == 0);
+  right_ticks = 1;
+  command("START pwm_sweep 1");
+  for (int i = 0; i < 410; ++i) {
+    if (i % 50 == 0) server.input += "PING\n";
+    tick();
+  }
+  assert(robot.left == 5);
+  command("STOP");
+  assert(!controller.dashboardBusy() && robot.left == 0 && robot.right == 0);
+  command("START pwm_sweep 1");
+  robot.fail_encoders = true;
+  const auto interrupted = server.output.size();
+  tick();
+  assert(std::strcmp(controller.dashboardState(), "fault") == 0);
+  assert(!controller.dashboardBusy() && robot.left == 0 && robot.right == 0);
+  assert(server.output.substr(interrupted).find("pwm_sweep_done") == std::string::npos);
+  robot.fail_encoders = false;
+  // A fresh calibration clears a sensor fault, then STOP leaves it uncalibrated.
+  command("CALIBRATE");
+  command("STOP");
+  command("SETTINGS 0 1");
   command("START line_follow");
   assert(robot.left == 0); // Calibration required for closed-loop/motor test.
   command("START open_loop");

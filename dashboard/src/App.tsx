@@ -55,11 +55,7 @@ export default function App() {
             <Icon name="grid" />
             Control room
           </a>
-          <a
-            className="nav-link"
-            href="#experiments"
-            onClick={() => setSource('virtual')}
-          >
+          <a className="nav-link" href="#experiments">
             <Icon name="layers" />
             Experiments
           </a>
@@ -230,7 +226,12 @@ export default function App() {
             />
           </div>
         </div>
-        <Results simulation={state?.simulation} candidates={candidates} />
+        <Results
+          simulation={state?.simulation}
+          candidates={candidates}
+          online={online}
+          sweep={state?.robot.pwm_sweep}
+        />
         <footer className="page-footer">
           <span>University of Bristol · Team Ctrl+Alt+Elite</span>
           <span>Fixed-step simulation. Real measurements.</span>

@@ -27,17 +27,14 @@ experiments/.venv/bin/python -m pip install -r experiments/requirements.txt
 pnpm --dir dashboard install --frozen-lockfile
 ```
 
-Start the dashboard from its project directory:
+Start the dashboard from the repository root or the `dashboard` directory:
 
 ```sh
-cd dashboard
 pnpm dev
 ```
 
-Or run `pnpm --dir dashboard run dev` from the repository root. This single
-command starts the Python API and Vite together. **Ctrl+C** stops both services,
-including any simulation processes owned by the API; no separate backend
-terminal is needed.
+This command starts the Python API, waits for it to bind, and starts Vite.
+**Ctrl+C** stops both services, including simulation processes owned by the API.
 
 The launcher uses `experiments/.venv/bin/python` automatically
 (`experiments/.venv/Scripts/python.exe` on Windows). Set `DASHBOARD_PYTHON` to a
@@ -45,7 +42,9 @@ different Python executable path if your dependencies are installed elsewhere.
 On Windows, use that `Scripts/python.exe` path for the dependency installation
 command above as well.
 
-Open **http://127.0.0.1:5173**. Vite forwards `/api` to `127.0.0.1:8765`.
+Open **http://127.0.0.1:5173**. Vite forwards `/api` to the Python backend
+started by this session. It uses port 8765 when available and prints the
+assigned local address at startup.
 If Processing is installed elsewhere, set `PROCESSING_RESOURCES` before running
 `pnpm dev`; the Python service inherits it. This directory must contain `jdk`
 and `modes/java`; the default is
@@ -81,8 +80,13 @@ drift is left of the starting line. This is simulated world pose; the noise
 candidates are illustrative and are not calibrated hardware predictions.
 
 Successful selections save CSV and Excel files under `dashboard/results/<run-id>/`.
-The download buttons export the latest successful selection during this API
-session. Restarting the service clears its in-memory history; saved files remain.
+Open **Run results** from either robot view to download saved simulation and PWM
+sweep workbooks, newest first. Workbooks from previous sessions appear there
+after a restart. The latest completed simulation in the current session also
+has CSV and Excel shortcuts.
+Select **Delete** beside a saved workbook, then **Delete workbook** to permanently
+remove that Excel file. Simulation CSVs and copies already downloaded to your
+computer are kept. Deleting an interrupted PWM sweep also removes its resume data.
 A failed or cancelled job retains previous exports. The dashboard never overwrites
 `experiments/data/straight_line_results.xlsx` or its physical observations.
 The Excel export includes comparison formulas and an empty observation sheet.
@@ -147,6 +151,39 @@ are cached I2C values. The UI does not infer ground truth or a battery reading.
 Only one TCP client can own the robot; close the old Processing live-comparison
 connection before connecting the dashboard.
 
+### Measure wheel angular velocity
+
+Under **Physical robot → Robot procedure**, select **Wheel speed · PWM sweep**,
+choose 1–100 runs and select **Start PWM sweep**. The robot must be idle or
+ready and running firmware with sweep support. Each run starts with a two-second
+settling period at PWM 0. It then applies the same command to both wheels at
+PWM 0, 5, 10 and so on through 300. Each of the 61 levels is sampled for two
+seconds, giving about 2 minutes 4 seconds per run. **PWM sweep progress** at the
+top of the physical robot controls shows the current run (for example, **Run 2
+of 5**) and the total samples recorded. Calibration and steering corrections are
+bypassed for this measurement.
+
+The firmware measures each wheel’s signed encoder change over the step.
+Angular velocity in rad/s is the count change multiplied by 2π and divided by
+both counts per wheel revolution (nominally 358.3) and the actual elapsed time
+in seconds. This measures mean velocity over the entire step, including the
+wheel’s response to the PWM change.
+
+After each complete run, the dashboard updates the same
+`dashboard/results/pwm-sweep-<id>.xlsx` workbook in the background while
+the robot continues measuring. Download the latest saved version from
+**Run results**. Each run has a sheet with PWM, elapsed milliseconds, encoder
+changes and angular velocities for both wheels. The first sheet averages the
+saved runs at each PWM and plots both wheels.
+
+If a sweep stops, open **Physical robot → Resume an interrupted sweep**, select
+the workbook, and reconnect the robot. With 56 complete runs in a batch of 100,
+select **Resume from run 57** to add the remaining 44 runs to the same workbook.
+An interrupted run starts again at PWM 0 to keep its measurements together in
+one continuous sweep. This also works after restarting the dashboard. If all
+measurements were recorded and only the Excel export was interrupted, select
+**Finish saving workbook**. This works with the robot disconnected.
+
 ## Project structure
 
 - `src/components/`: focused controls, telemetry, plots and result views.
@@ -169,6 +206,10 @@ uptime, odometry, encoder counts, PWM, five reflectance readings, readiness and
 controller state. `STOP` is accepted even before `HELLO`. The API returns after
 sending STOP; telemetry confirms the resulting state, including failed I2C stops.
 
+Firmware advertising `"pwm_sweep":true` in its `HELLO` reply accepts
+`START pwm_sweep N` for N runs. It sends a `pwm_sample` record at each
+measured step and a `pwm_sweep_done` record after the final motor stop succeeds.
+
 Firmware with persistent settings includes a `settings` object in its `HELLO`
 reply. It contains the booleans `drift_correction` and `drift_path_recovery`.
 Send `SETTINGS 1 0` to enable drift correction and disable path recovery.
@@ -179,8 +220,8 @@ Run from the repository root:
 
 ```sh
 pnpm --dir dashboard run build
-experiments/.venv/bin/python -m unittest dashboard.server.test_server -v
-(cd experiments && .venv/bin/python -m unittest test_experiment test_workbook_results)
+experiments/.venv/bin/python -m unittest discover -s dashboard/server -t . -v
+(cd experiments && .venv/bin/python -m unittest test_experiment test_workbook_results test_pwm_workbook)
 python3 tests/run_dashboard_tests.py
 python3 tests/run_drift_storage_tests.py
 python3 tests/run_controller_tests.py

@@ -1,0 +1,8 @@
+{
+  "name": "robotics-science-and-systems",
+  "private": true,
+  "packageManager": "pnpm@9.9.0",
+  "scripts": {
+    "dev": "pnpm --dir dashboard run dev"
+  }
+}

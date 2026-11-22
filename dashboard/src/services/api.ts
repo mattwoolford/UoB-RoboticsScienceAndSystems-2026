@@ -1,4 +1,4 @@
-import type { DashboardState } from '../types/dashboard';
+import type { DashboardState, SavedWorkbook } from '../types/dashboard';
 
 /** Fail visibly on HTTP errors and bound requests so a stalled bridge cannot queue actions. */
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -17,6 +17,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 export const getState = () => request<DashboardState>('state');
+export const getWorkbooks = () => request<SavedWorkbook[]>('results/workbooks');
+export const deleteWorkbook = (filename: string) =>
+  request(`results/workbooks/${encodeURIComponent(filename)}`, {
+    method: 'DELETE',
+  });
 export const post = <T = unknown>(path: string, payload: object = {}) =>
   request<T>(path, {
     method: 'POST',

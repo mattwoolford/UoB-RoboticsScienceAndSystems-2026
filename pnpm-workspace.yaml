@@ -1,0 +1,3 @@
+# Keep root launch commands local. The dashboard owns its dependencies and lockfile.
+packages:
+  - '.'

@@ -8,6 +8,8 @@ import tempfile
 import threading
 import uuid
 
+from .results import workbook_available
+
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'experiments'))
 from experiment_setup import default_candidates, LABELS
@@ -33,7 +35,7 @@ class SimulationService:
         self.thread = None
         self.output = Path(output_directory or ROOT / 'dashboard/results')
         self.csv_bytes = None
-        self.xlsx_bytes = None
+        self.workbook = None
         self.samples = deque(maxlen=16000)
         self.state = dict(status='idle', message='Ready to run a simulation.', models=[],
                           progress=0, summary=[], run_id=None)
@@ -42,7 +44,7 @@ class SimulationService:
         """Copy under a lock so HTTP threads never observe partial sample updates."""
         with self.lock:
             return {**copy.deepcopy(self.state), 'samples': list(self.samples),
-                    'has_exports': self.csv_bytes is not None}
+                    'has_exports': self.csv_bytes is not None, 'has_workbook': workbook_available(self.workbook)}
 
     def start(self, options):
         """Validate bounded workload before creating the worker thread."""
@@ -89,7 +91,8 @@ class SimulationService:
             from workbook_results import ensure_workbook, write_simulations
             resources = os.environ.get('PROCESSING_RESOURCES',
                                        '/Applications/Processing.app/Contents/app/resources')
-            with tempfile.TemporaryDirectory(prefix='dashboard-run-') as temporary:
+            self.output.mkdir(parents=True, exist_ok=True)
+            with tempfile.TemporaryDirectory(prefix='.dashboard-run-', dir=self.output) as temporary:
                 with SimulationRunner(ROOT, resources, live=live, progress_callback=sample,
                                       cancel_event=self.cancel_event) as runner:
                     paths = runner.run_candidates(temporary, default_candidates(), mode=mode,
@@ -107,7 +110,6 @@ class SimulationService:
                 ensure_workbook(workbook, default_candidates())
                 write_simulations(workbook, frames)
                 csv_data = combined.to_csv(index=False).encode()
-                xlsx_data = workbook.read_bytes()
                 # Cancellation and publication share the lock: no cancelled batch can commit.
                 with self.lock:
                     if self.cancel_event.is_set():
@@ -115,8 +117,9 @@ class SimulationService:
                     destination = self.output / self.state['run_id']
                     destination.mkdir(parents=True, exist_ok=False)
                     (destination / 'results.csv').write_bytes(csv_data)
-                    (destination / 'results.xlsx').write_bytes(xlsx_data)
-                    self.csv_bytes, self.xlsx_bytes = csv_data, xlsx_data
+                    # Publish the finished file in one rename so downloads see the whole workbook.
+                    self.workbook = workbook.replace(destination / 'results.xlsx')
+                    self.csv_bytes = csv_data
                     self.state.update(status='completed', progress=1, summary=summary,
                                       message='All selected trials completed. Results saved.')
         except Exception as error:

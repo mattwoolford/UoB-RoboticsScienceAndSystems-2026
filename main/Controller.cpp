@@ -1,4 +1,5 @@
 #include "Controller.h"
+#include <cmath>
 #include <cstring>
 
 const unsigned long Controller_c::UPDATE_INTERVAL_MS;
@@ -97,6 +98,7 @@ void Controller_c::update(Robot_c &robot, RobotWifiAP_c &server) {
   // Ask the robot for the latest encoder information, and then use this
   // to update the odometry on board the StampC3 (see OdometryModel.h).
   const bool encoders_fresh = robot.getEncoders();
+  const unsigned long encoder_ms = robot.getMillis();
   const bool fresh_odometry = encoders_fresh &&
       odometry.update(robot.getLeftEncoderCount(), robot.getRightEncoderCount());
 
@@ -110,6 +112,10 @@ void Controller_c::update(Robot_c &robot, RobotWifiAP_c &server) {
     if (!encoders_fresh && dashboardBusy()) {
       dashboard_fault = true;
       stopFromDashboard(robot);
+    }
+    if (dashboard_action == DashboardAction::PWM_SWEEP) {
+      updatePwmSweep(robot, encoder_ms);
+      return;
     }
     updateDashboard(robot, now, fresh_odometry);
     return;
@@ -396,6 +402,7 @@ const char* Controller_c::dashboardState() const {
     case DashboardAction::OPEN_LOOP: return "open_loop";
     case DashboardAction::LINE_FOLLOW: return "line_follow";
     case DashboardAction::MOTOR_TEST: return "motor_test";
+    case DashboardAction::PWM_SWEEP: return "pwm_sweep";
     default: return motor_deadband_calibrated ? "ready" : "idle";
   }
 }
@@ -404,6 +411,7 @@ bool Controller_c::stopFromDashboard(Robot_c &robot) {
   // Clear the action before attempting I2C: a failed stop can only be retried,
   // never followed by another driving command or an automatic calibration.
   dashboard_action = DashboardAction::IDLE;
+  sample_pending = false;
   signal = 0;
   mode = WAITING;
   call_count = 0;
@@ -428,10 +436,27 @@ bool Controller_c::startFromDashboard(Robot_c &robot, const char* test) {
   if (std::strcmp(test, "open_loop") == 0) requested = DashboardAction::OPEN_LOOP;
   else if (std::strcmp(test, "line_follow") == 0) requested = DashboardAction::LINE_FOLLOW;
   else if (std::strcmp(test, "motor_test") == 0) requested = DashboardAction::MOTOR_TEST;
-  else return false;
-  if (requested != DashboardAction::OPEN_LOOP && !motor_deadband_calibrated) return false;
+  else if (std::strncmp(test, "pwm_sweep ", 10) == 0) {
+    unsigned runs = 0;
+    for (const char* c = test + 10; *c; ++c) {
+      if (*c < '0' || *c > '9') return false;
+      runs = runs * 10 + (*c - '0');
+      if (runs > 100) return false;
+    }
+    if (!runs || !std::isfinite(odometry.encoderCountsPerRevolution)
+              || odometry.encoderCountsPerRevolution <= 0) return false;
+    sweep_runs = runs;
+    sweep_run = 1;
+    sweep_pwm = 0;
+    sweep_settling = true;
+    requested = DashboardAction::PWM_SWEEP;
+  } else return false;
+  if ((requested == DashboardAction::LINE_FOLLOW || requested == DashboardAction::MOTOR_TEST)
+      && !motor_deadband_calibrated) return false;
   // Refresh the count baseline while stopped, so calibration travel is excluded.
-  if (!robot.getEncoders() || !robot.setMotorPWM(0, 0)) {
+  const bool started = requested == DashboardAction::PWM_SWEEP
+      ? beginPwmStep(robot) : robot.getEncoders() && robot.setMotorPWM(0, 0);
+  if (!started) {
     dashboard_fault = true;
     stopFromDashboard(robot);
     return false;
@@ -445,6 +470,67 @@ bool Controller_c::startFromDashboard(Robot_c &robot, const char* test) {
   signal = 1;
   drift_correction.beginRun(drift_settings);
   dashboard_action = requested;
+  return true;
+}
+
+bool Controller_c::beginPwmStep(Robot_c &robot) {
+  // Pair a fresh encoder baseline and timestamp with the acknowledged command.
+  if (!robot.setMotorPWM(sweep_pwm, sweep_pwm) || !robot.getEncoders()) return false;
+  sweep_left_start = robot.getLeftEncoderCount();
+  sweep_right_start = robot.getRightEncoderCount();
+  sweep_started_ms = robot.getMillis();
+  return true;
+}
+
+void Controller_c::updatePwmSweep(Robot_c &robot, unsigned long encoder_ms) {
+  constexpr int PWM_INCREMENT = 5;
+  constexpr int MAX_PWM = 300;
+  constexpr unsigned long SAMPLE_MS = 2000;
+  const unsigned long elapsed = encoder_ms - sweep_started_ms;
+  if (elapsed < SAMPLE_MS) return;
+  if (sweep_settling) {
+    // Exclude wheel rundown from the zero-PWM measurement on every run.
+    sweep_left_start = robot.getLeftEncoderCount();
+    sweep_right_start = robot.getRightEncoderCount();
+    sweep_started_ms = encoder_ms;
+    sweep_settling = false;
+    return;
+  }
+
+  const int32_t left = OdometryModel_c::countChange(robot.getLeftEncoderCount(), sweep_left_start);
+  const int32_t right = OdometryModel_c::countChange(robot.getRightEncoderCount(), sweep_right_start);
+  const float rad_s_per_count = TWO_PI * 1000.0f / (odometry.encoderCountsPerRevolution * elapsed);
+  const bool final = sweep_pwm == MAX_PWM && sweep_run == sweep_runs;
+  sweep_sample = {sweep_run, sweep_pwm, elapsed, left, right,
+                  left * rad_s_per_count, right * rad_s_per_count, final};
+
+  if (final) {
+    // Only publish completion after an acknowledged stop.
+    if (!stopFromDashboard(robot)) {
+      dashboard_fault = true;
+      return;
+    }
+  } else {
+    if (sweep_pwm == MAX_PWM) {
+      ++sweep_run;
+      sweep_pwm = 0;
+      sweep_settling = true;
+    } else {
+      sweep_pwm += PWM_INCREMENT;
+    }
+    if (!beginPwmStep(robot)) {
+      dashboard_fault = true;
+      stopFromDashboard(robot);
+      return;
+    }
+  }
+  sample_pending = true;
+}
+
+bool Controller_c::takePwmSample(PwmSample &sample) {
+  if (!sample_pending) return false;
+  sample = sweep_sample;
+  sample_pending = false;
   return true;
 }
 

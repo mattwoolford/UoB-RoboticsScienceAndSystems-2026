@@ -23,6 +23,11 @@ export interface Summary {
   rms_drift_mm: number;
   mean_forward_mm: number;
 }
+export interface SavedWorkbook {
+  filename: string;
+  kind: 'simulation' | 'pwm_sweep';
+  saved_at: string;
+}
 export interface Telemetry {
   timestamp_ms: number;
   x_mm: number;
@@ -41,6 +46,23 @@ export interface DriftSettings {
   drift_correction: boolean;
   drift_path_recovery: boolean;
 }
+export interface ResumableSweep {
+  filename: string;
+  runs: number;
+  saved_runs: number;
+  saved_at?: string;
+}
+export interface PwmSweep {
+  status: 'idle' | 'running' | 'saving' | 'completed' | 'cancelled' | 'failed';
+  message: string;
+  runs: number;
+  completed_steps: number;
+  total_steps: number;
+  has_export: boolean;
+  filename?: string | null;
+  saved_runs?: number;
+  resumable?: ResumableSweep[];
+}
 export interface DashboardState {
   simulation: {
     status: 'idle' | 'running' | 'completed' | 'cancelled' | 'failed';
@@ -51,6 +73,7 @@ export interface DashboardState {
     summary: Summary[];
     run_id: string | null;
     has_exports?: boolean;
+    has_workbook?: boolean;
   };
   robot: {
     status: 'disconnected' | 'connecting' | 'connected' | 'error';
@@ -59,11 +82,17 @@ export interface DashboardState {
     message: string;
     telemetry: Telemetry | null;
     history: Telemetry[];
+    supports_pwm_sweep: boolean;
+    pwm_sweep: PwmSweep;
   };
   candidates: Candidate[];
 }
 export type Source = 'virtual' | 'robot';
-export type Procedure = 'open_loop' | 'line_follow' | 'motor_test';
+export type Procedure =
+  | 'open_loop'
+  | 'line_follow'
+  | 'motor_test'
+  | 'pwm_sweep';
 export interface SimulationConfig {
   mode: 'single' | 'all_sequential' | 'all_parallel';
   selected: string;

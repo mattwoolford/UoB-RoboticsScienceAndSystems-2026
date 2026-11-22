@@ -1,28 +1,35 @@
 """Loopback HTTP API; Vite proxies /api and production assets share this origin."""
 import argparse
+import errno
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import mimetypes
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from .pwm_sweep import sweep_id
+from .results import list_workbooks, workbook_available, workbook_path
 from .robot import RobotService
 from .simulations import CANDIDATES, SimulationService
 
 DIST = Path(__file__).resolve().parents[1] / 'dist'
+XLSX_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 
 
 class DashboardServer(ThreadingHTTPServer):
     """Own services for the server lifetime and close their workers on shutdown."""
     daemon_threads = True
 
-    def __init__(self, address):
-        self.simulation = SimulationService()
-        self.robot = RobotService()
+    def __init__(self, address, output_directory=None):
+        self.results = Path(output_directory or DIST.parent / 'results').resolve()
+        self.simulation = SimulationService(self.results)
+        self.robot = RobotService(self.results)
         super().__init__(address, Handler)
 
     def server_close(self):
         self.robot.disconnect()
+        if self.robot.sweep.worker:
+            self.robot.sweep.worker.join()
         self.simulation.close()
         super().server_close()
 
@@ -68,6 +75,16 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             return False
 
+    def send_workbook(self, path, filename):
+        if workbook_available(path):
+            try:
+                data = path.read_bytes()
+            except FileNotFoundError:
+                pass  # Another request may have just deleted it.
+            else:
+                return self.reply(200, data, XLSX_TYPE, filename)
+        return self.reply(404, {'error': 'Saved workbook not found.'})
+
     def do_GET(self):
         """Serve live state, completed-run exports, or the built React application."""
         if not self.trusted():
@@ -76,15 +93,28 @@ class Handler(BaseHTTPRequestHandler):
         if route == '/api/state':
             return self.reply(200, dict(simulation=self.server.simulation.snapshot(),
                                        robot=self.server.robot.snapshot(), candidates=CANDIDATES))
-        if route in {'/api/results.csv', '/api/results.xlsx'}:
-            csv = route.endswith('.csv')
+        if route == '/api/results/workbooks':
+            return self.reply(200, list_workbooks(self.server.results))
+        if route.startswith('/api/results/workbooks/'):
+            filename = route.removeprefix('/api/results/workbooks/')
+            path = workbook_path(self.server.results, filename)
+            return self.send_workbook(path, filename)
+        if route == '/api/robot/pwm-sweep.xlsx':
+            with self.server.robot.lock:
+                workbook = self.server.robot.sweep.workbook
+            if workbook is None:
+                return self.reply(404, {'error': 'Complete a PWM run before downloading the workbook.'})
+            return self.send_workbook(workbook, workbook.name)
+        if route == '/api/results.xlsx':
             with self.server.simulation.lock:
-                data = self.server.simulation.csv_bytes if csv else self.server.simulation.xlsx_bytes
+                workbook = self.server.simulation.workbook
+            return self.send_workbook(workbook, 'results.xlsx')
+        if route == '/api/results.csv':
+            with self.server.simulation.lock:
+                data = self.server.simulation.csv_bytes
             if data is None:
                 return self.reply(404, {'error': 'Complete a simulation before downloading results.'})
-            return self.reply(200, data, 'text/csv' if csv else
-                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                'results.csv' if csv else 'results.xlsx')
+            return self.reply(200, data, 'text/csv', 'results.csv')
         if route.startswith('/api/'):
             return self.reply(404, {'error': 'Unknown API route.'})
         # Resolve within dist to prevent filesystem traversal, including symlinks.
@@ -96,6 +126,34 @@ class Handler(BaseHTTPRequestHandler):
         if not target.is_file():
             return self.reply(404, {'error': 'Run pnpm dev or build the dashboard with pnpm build.'})
         return self.reply(200, target.read_bytes(), mimetypes.guess_type(target.name)[0] or 'application/octet-stream')
+
+    def do_DELETE(self):
+        """Remove a single published workbook by its download name."""
+        if not self.trusted():
+            return self.reply(403, {'error': 'Only local dashboard requests are allowed.'})
+        route = urlsplit(self.path).path
+        if not route.startswith('/api/results/workbooks/'):
+            return self.reply(404, {'error': 'Unknown API route.'})
+        filename = route.removeprefix('/api/results/workbooks/')
+        try:
+            if filename.startswith('pwm-sweep-'):
+                try:
+                    batch_id = sweep_id(filename)
+                except ValueError:
+                    return self.reply(404, {'error': 'Saved workbook not found.'})
+                self.server.robot.sweep.store.delete_workbook(batch_id)
+            else:
+                path = workbook_path(self.server.results, filename)
+                if path is None:
+                    return self.reply(404, {'error': 'Saved workbook not found.'})
+                path.unlink()
+        except FileNotFoundError:
+            return self.reply(404, {'error': 'Saved workbook not found.'})
+        except ValueError as error:
+            return self.reply(409, {'error': str(error)})
+        except OSError as error:
+            return self.reply(409, {'error': f'Could not delete the workbook: {error.strerror}.'})
+        self.reply(200, {'ok': True})
 
     def do_POST(self):
         """Validate bounded JSON commands and translate adapter errors for the UI."""
@@ -121,6 +179,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.server.robot.disconnect()
             elif route == '/api/robot/command':
                 self.server.robot.command(options.get('command'), options.get('procedure'))
+            elif route == '/api/robot/pwm-sweep/start':
+                self.server.robot.start_pwm_sweep(options.get('runs'))
+            elif route == '/api/robot/pwm-sweep/resume':
+                self.server.robot.resume_pwm_sweep(options.get('filename'))
             elif route == '/api/robot/settings':
                 settings = self.server.robot.set_settings(options)
                 return self.reply(200, {'ok': True, 'settings': settings})
@@ -137,9 +199,17 @@ def main():
     """Bind only loopback; a network robot is reached through the TCP adapter."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--port', type=int, default=8765)
+    parser.add_argument('--allow-port-fallback', action='store_true',
+                        help='Use a free loopback port if the requested port is occupied.')
     args = parser.parse_args()
-    with DashboardServer(('127.0.0.1', args.port)) as server:
-        print(f'Dashboard API: http://127.0.0.1:{args.port}', flush=True)
+    try:
+        server = DashboardServer(('127.0.0.1', args.port))
+    except OSError as error:
+        if not args.allow_port_fallback or error.errno != errno.EADDRINUSE:
+            raise
+        server = DashboardServer(('127.0.0.1', 0))
+    with server:
+        print(f'Dashboard API: http://127.0.0.1:{server.server_port}', flush=True)
         try:
             server.serve_forever()
         except KeyboardInterrupt:

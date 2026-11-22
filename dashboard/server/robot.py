@@ -5,10 +5,13 @@ import errno
 import ipaddress
 import json
 import math
+from pathlib import Path
 import socket
 import threading
 import time
 import uuid
+
+from .pwm_sweep import PwmSweep, sweep_id
 
 
 def drift_settings(values):
@@ -54,7 +57,7 @@ def connection_error_message(error, host, port):
 class RobotService:
     """Maintain one hardware connection; never keep moving for an absent browser."""
 
-    def __init__(self):
+    def __init__(self, output_directory=None):
         self.lock = threading.RLock()
         self.write_lock = threading.RLock()
         self.stop_generation = 0
@@ -70,13 +73,18 @@ class RobotService:
         self.last_browser = 0
         self.last_telemetry = 0
         self.state = dict(status='disconnected', message='Connect to the robot WiFi first.',
-                          telemetry=None, settings=None, connection_id=None)
+                          telemetry=None, settings=None, connection_id=None, supports_pwm_sweep=False)
         self.history = deque(maxlen=600)
+        self.sweep = PwmSweep(self.lock, output_directory or Path(__file__).resolve().parents[1] / 'results',
+                              lambda: self.command('stop'))
 
     def snapshot(self):
         """Return a consistent, bounded history for browser plots."""
         with self.lock:
-            return {**copy.deepcopy(self.state), 'history': list(self.history)}
+            state = {**copy.deepcopy(self.state), 'history': list(self.history),
+                     'pwm_sweep': self.sweep.snapshot()}
+        state['pwm_sweep']['resumable'] = self.sweep.resumable()
+        return state
 
     def heartbeat(self):
         """Only explicit browser heartbeats renew the motor-control lease."""
@@ -140,9 +148,19 @@ class RobotService:
         if command == 'stop':
             with self.write_lock:
                 self.stop_generation += 1
+                with self.lock:
+                    self.sweep.interrupt('cancelled', 'PWM sweep recording cancelled. Motor stop requested.')
                 self._send('STOP')
             return
         self._request(wire, wire + (' ' + procedure if command == 'start' else ''))
+
+    def start_pwm_sweep(self, runs):
+        if type(runs) is not int or not 1 <= runs <= 100:
+            raise ValueError('Sweep runs must be an integer between 1 and 100.')
+        self._request('START', None, sweep_runs=runs)
+
+    def resume_pwm_sweep(self, filename):
+        self._request('START', None, resume_id=sweep_id(filename))
 
     def set_settings(self, options):
         """Save both flags on the same robot connection that supplied the draft."""
@@ -153,32 +171,55 @@ class RobotService:
         line = 'SETTINGS {} {}'.format(int(settings['drift_correction']), int(settings['drift_path_recovery']))
         return self._request('SETTINGS', line, connection_id)['settings']
 
-    def _request(self, wire, line, connection_id=None):
+    def _request(self, wire, line, connection_id=None, sweep_runs=None, resume_id=None):
         """Serialize acknowledged commands while keeping STOP available."""
         with self.write_lock:
             generation = self.stop_generation
         with self.command_lock:
-            with self.lock:
-                if self.state['status'] != 'connected':
-                    raise ValueError('Connect the robot before sending commands.')
-                if connection_id is not None:
-                    if self.state['connection_id'] != connection_id:
-                        raise ValueError('The robot connection changed. Reopen Settings and try again.')
-                    if self.state['settings'] is None:
-                        raise ValueError('Connected firmware does not support drift settings.')
-                if time.monotonic() - self.last_browser > 1.2:
-                    raise ValueError('Browser heartbeat expired; reconnect the robot.')
-                self.pending, self.ack = wire, None
-                self.ack_event.clear()
+            batch = None
+            writer_started = False
             try:
+                if wire in {'START', 'CALIBRATE'}:
+                    with self.lock:
+                        if self.sweep.state['status'] in {'running', 'saving'}:
+                            raise ValueError('A PWM sweep is already in progress.')
+                if sweep_runs is not None or resume_id is not None:
+                    batch = self.sweep.claim(sweep_runs, resume_id)
+                    remaining = batch['runs'] - batch['saved_runs']
+                    if remaining == 0:
+                        # The final measurement survived; only the Excel export needs finishing.
+                        with self.lock:
+                            self.sweep.begin(batch)
+                            writer_started = True
+                            self.sweep.finish_export()
+                        return
+                    line = f'START pwm_sweep {remaining}'
+                with self.lock:
+                    if self.state['status'] != 'connected' or self.stop_event.is_set():
+                        raise ValueError('Connect the robot before sending commands.')
+                    if connection_id is not None:
+                        if self.state['connection_id'] != connection_id:
+                            raise ValueError('The robot connection changed. Reopen Settings and try again.')
+                        if self.state['settings'] is None:
+                            raise ValueError('Connected firmware does not support drift settings.')
+                    if time.monotonic() - self.last_browser > 1.2:
+                        raise ValueError('Browser heartbeat expired; reconnect the robot.')
+                    if batch is not None:
+                        if not self.state['supports_pwm_sweep']:
+                            raise ValueError('Flash the PWM sweep firmware before starting this experiment.')
+                        self.sweep.begin(batch)
+                        writer_started = True
+                    self.pending, self.ack = wire, None
+                    self.ack_event.clear()
                 with self.write_lock:
                     if generation != self.stop_generation:
                         raise ValueError('Command cancelled by Stop.')
                     self._send(line)
                 if not self.ack_event.wait(2):
                     # A lost ACK must not leave motion running with an ambiguous UI.
-                    self.disconnect()
-                    raise ValueError('Robot acknowledgement timed out; disconnected and stop requested.')
+                    message = 'Robot acknowledgement timed out; disconnected and stop requested.'
+                    self.disconnect(failure=message)
+                    raise ValueError(message)
                 if self.ack.get('ok') is not True:
                     raise ValueError(self.ack.get('error', 'Robot rejected the command.'))
                 if wire == 'START':
@@ -186,7 +227,18 @@ class RobotService:
                     with self.lock:
                         self.history.clear()
                 return self.ack
+            except (ValueError, OSError) as error:
+                if writer_started:
+                    with self.lock:
+                        self.sweep.interrupt('failed', str(error))
+                raise
             finally:
+                if batch is not None and not writer_started:
+                    try:
+                        if resume_id is None:
+                            self.sweep.store.discard(batch['id'])
+                    finally:
+                        self.sweep.store.release(batch['id'])
                 with self.lock:
                     self.pending = None
 
@@ -196,17 +248,26 @@ class RobotService:
         # robot label or WiFi SSID. Different robots can share the same AP address.
         if record.get('type') == 'hello' and record.get('protocol') == 1:
             with self.lock:
+                self.state['supports_pwm_sweep'] = record.get('pwm_sweep') is True
                 self.state['settings'] = (drift_settings(record['settings'])
                                           if record.get('settings') is not None else None)
                 self.hello_event.set()
         elif record.get('type') == 'ack':
             with self.lock:
                 if record.get('command') == self.pending:
+                    if self.pending == 'START' and record.get('ok') is True:
+                        self.sweep.acknowledge_start()
                     if self.pending == 'SETTINGS' and record.get('ok') is True:
                         self.state['settings'] = drift_settings(record.get('settings'))
                         record['settings'] = self.state['settings']
                     self.ack = record
                     self.ack_event.set()
+        elif record.get('type') == 'pwm_sample':
+            with self.lock:
+                self.sweep.sample(record)
+        elif record.get('type') == 'pwm_sweep_done':
+            with self.lock:
+                self.sweep.finish()
         elif record.get('type') == 'telemetry':
             fields = ('timestamp_ms', 'x_mm', 'y_mm', 'heading_rad', 'left_pwm',
                       'right_pwm', 'left_count', 'right_count')
@@ -220,6 +281,8 @@ class RobotService:
                 raise ValueError('Invalid robot state telemetry.')
             record['pose_source'] = 'odometry'
             with self.lock:
+                if self.sweep.recording and record['state'] != 'pwm_sweep':
+                    self.sweep.interrupt('failed', f"PWM sweep interrupted. Robot state is {record['state']}.")
                 self.state['telemetry'] = record
                 self.history.append(record)
                 self.last_telemetry = time.monotonic()
@@ -256,10 +319,12 @@ class RobotService:
                     self._record(record)
                 if len(buffer) > 4096:
                     raise ValueError('Robot message exceeded protocol size.')
-        except (OSError, ValueError) as error:
+        except (OSError, ValueError, OverflowError) as error:
             if not self.stop_event.is_set():
                 with self.lock:
-                    self.state.update(status='error', message=str(error), settings=None, connection_id=None)
+                    self.state.update(status='error', message=str(error), settings=None, connection_id=None,
+                                      supports_pwm_sweep=False)
+                    self.sweep.interrupt('failed', str(error))
         finally:
             with self.write_lock:
                 try:
@@ -272,9 +337,14 @@ class RobotService:
                     self.ack = {'ok': False, 'error': 'Robot disconnected; stop requested.'}
                     self.ack_event.set()
 
-    def disconnect(self):
+    def disconnect(self, failure=None):
         """Request an immediate stop, then drop TCP so firmware also sees lease loss."""
-        self.stop_event.set()
+        with self.write_lock:
+            self.stop_generation += 1
+            self.stop_event.set()
+            with self.lock:
+                self.sweep.interrupt('failed' if failure else 'cancelled',
+                                     failure or 'Robot disconnected during PWM sweep.')
         try:
             if self.sock:
                 self._send('STOP')
@@ -288,5 +358,5 @@ class RobotService:
         self.sock = None
         with self.lock:
             self.state.update(status='disconnected', message='Robot disconnected.', telemetry=None,
-                              settings=None, connection_id=None)
+                              settings=None, connection_id=None, supports_pwm_sweep=False)
             self.history.clear()

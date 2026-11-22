@@ -1,13 +1,16 @@
 """Persistent Excel project: replace selected simulation sheets, retain observations."""
 from pathlib import Path
-import os
 import re
-import tempfile
 
 import pandas as pd
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
+
+if __package__:
+    from .workbook_io import save_workbook_atomic
+else:
+    from workbook_io import save_workbook_atomic
 
 REAL_SHEET = 'real_world'
 COMPARISON_SHEET = 'comparison'
@@ -56,19 +59,6 @@ def _sheet(book, name, columns, frame=None):
             cell.number_format = ('@' if column in {'seed', 'run_id', 'model_id', 'drive_mode'}
                                   else '0.0000' if column.endswith(('_mm', '_rad', '_fraction'))
                                   or column == 'gain_imbalance' else 'General')
-
-
-def _save_atomic(book, path):
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(suffix='.xlsx', dir=path.parent)
-    os.close(fd)
-    try:
-        book.save(temporary)
-        os.replace(temporary, path)
-    finally:
-        Path(temporary).unlink(missing_ok=True)
-        book.close()
 
 
 def comparison_rows(book):
@@ -151,7 +141,7 @@ def ensure_workbook(path, candidates):
             changed = True
     if changed or COMPARISON_SHEET not in book.sheetnames:
         refresh_comparison(book)
-        _save_atomic(book, path)
+        save_workbook_atomic(book, path)
     else:
         book.close()
     return path
@@ -172,7 +162,7 @@ def write_simulations(path, frames):
         frame['seed'] = frame.seed.map(str)
         _sheet(book, name, SAMPLE_COLUMNS, frame)
     refresh_comparison(book)
-    _save_atomic(book, path)
+    save_workbook_atomic(book, path)
 
 
 def read_simulations(path, model_ids):

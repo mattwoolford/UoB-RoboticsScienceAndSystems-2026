@@ -28,7 +28,7 @@ export function useDashboard() {
         if (!alive) return;
         robotConnected.current = false;
         setConnectionError(
-          'Local bridge unavailable. From the repository root, start experiments/.venv/bin/python -m dashboard.server.app and leave it running.',
+          'Local bridge unavailable. Run pnpm dev from the repository root to start the dashboard and Python backend together.',
         );
       } finally {
         if (alive) pollTimer = setTimeout(poll, 500);

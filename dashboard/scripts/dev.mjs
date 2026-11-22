@@ -85,7 +85,7 @@ process.on('SIGTERM', () => shutdown(0));
 
 const backend = launch(
   python,
-  ['-u', '-m', 'dashboard.server.app'],
+  ['-u', '-m', 'dashboard.server.app', '--allow-port-fallback'],
   root,
   true,
 );
@@ -95,13 +95,13 @@ let output = '';
 backend.stdout.on('data', (chunk) => {
   process.stdout.write(chunk);
   output = (output + chunk.toString()).slice(-4096);
-  if (
-    !stopping &&
-    !frontendStarted &&
-    output.includes('Dashboard API: http://127.0.0.1:8765')
-  ) {
+  const ready = /^Dashboard API: http:\/\/127\.0\.0\.1:(\d+)\r?\n/m.exec(
+    output,
+  );
+  if (!stopping && !frontendStarted && ready) {
     frontendStarted = true;
     clearTimeout(startupTimer);
+    process.env.DASHBOARD_API_PORT = ready[1];
     launch(
       process.execPath,
       [

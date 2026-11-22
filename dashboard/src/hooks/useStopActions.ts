@@ -17,19 +17,25 @@ export function useStopActions(
   const telemetry = state?.robot.telemetry;
   // A connection alone is not active work. Keep Stop available until a failed
   // motor stop is confirmed, including nonzero PWM even if the state is faulted.
-  const canStopRobot =
-    online &&
-    state?.robot.status === 'connected' &&
+  const activeMotion =
     !!telemetry &&
     ([
       'calibrating',
       'open_loop',
       'line_follow',
       'motor_test',
+      'pwm_sweep',
       'stopping',
     ].includes(telemetry.state) ||
       telemetry.left_pwm !== 0 ||
       telemetry.right_pwm !== 0);
+  const canStopRobot =
+    online &&
+    state?.robot.status === 'connected' &&
+    (activeMotion ||
+      state.robot.pwm_sweep?.status === 'running' ||
+      pending === 'robot/pwm-sweep/start' ||
+      pending === 'robot/pwm-sweep/resume');
   const canStopSimulation = online && state?.simulation.status === 'running';
 
   useEffect(() => {

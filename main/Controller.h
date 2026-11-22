@@ -93,6 +93,16 @@ class Controller_c {
     bool calibrateFromDashboard();
     /** @brief Starts a bounded named test; open_loop uses uncompensated CONSTANT_PWM. */
     bool startFromDashboard(Robot_c &robot, const char* test);
+    struct PwmSample {
+      unsigned run;
+      int pwm;
+      unsigned long elapsed_ms;
+      int32_t left_delta, right_delta;
+      float left_rad_s, right_rad_s;
+      bool final;
+    };
+    /** @brief Consume the last complete two-second encoder window once. */
+    bool takePwmSample(PwmSample &sample);
     /** @brief Latches a stop and retries failed I2C stops on subsequent updates. */
     bool stopFromDashboard(Robot_c &robot);
     /** @brief Stable state names used by the WiFi dashboard protocol. */
@@ -111,12 +121,21 @@ class Controller_c {
 
   private:
     // Dashboard mode is opt-in so existing controller callers retain their API.
-    enum class DashboardAction { IDLE, CALIBRATING, OPEN_LOOP, LINE_FOLLOW, MOTOR_TEST };
+    enum class DashboardAction { IDLE, CALIBRATING, OPEN_LOOP, LINE_FOLLOW, MOTOR_TEST, PWM_SWEEP };
     bool dashboard_control = false;
     bool dashboard_stop_pending = false;
     bool dashboard_fault = false;
     DashboardAction dashboard_action = DashboardAction::IDLE;
     unsigned long dashboard_started_ms = 0;
+    unsigned sweep_runs = 0, sweep_run = 0;
+    int sweep_pwm = 0;
+    bool sweep_settling = false;
+    int32_t sweep_left_start = 0, sweep_right_start = 0;
+    unsigned long sweep_started_ms = 0;
+    PwmSample sweep_sample{};
+    bool sample_pending = false;
+    bool beginPwmStep(Robot_c &robot);
+    void updatePwmSweep(Robot_c &robot, unsigned long encoder_ms);
     /** @brief Advances one managed action after sensor and odometry acquisition. */
     void updateDashboard(Robot_c &robot, unsigned long now, bool fresh_odometry);
     /** @brief Internal modes used by the nominal line-following demonstration. */
