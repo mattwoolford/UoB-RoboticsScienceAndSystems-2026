@@ -1,0 +1,1 @@
+trial_id,test,wall_material,start_pose_or_alignment,opening_width_mm,body_width_mm,right_clearance_mm,edge_definition_raw,measured_edge_to_axle_mm,left_start_pwm,right_start_pwm,odom_distance_mm,actual_distance_mm,odom_turn_deg,actual_turn_deg,whole_body_outside,contact,notes
